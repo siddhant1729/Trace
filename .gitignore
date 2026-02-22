@@ -1,8 +1,18 @@
+# Python
 .venv/
+venv/
 .env
 __pycache__/
 faiss_index/
 uploads/
 *.pyc
 *.sh
-*.ipynb
+
+# Frontend (Next.js)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env*
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts
+frontend/.vercel
