@@ -11,6 +11,9 @@
 Development shouldn't start with a blank text editor; it starts on a whiteboard. However, the friction of translating those visual ideas into a structured codebase is where velocity is lost.
 
 **Trace** eliminates this bottleneck. By combining multimodal understanding with agentic reasoning, Trace doesn't just "see" your diagram—it understands your intent, retrieves your preferred architectural patterns, and scaffolds your project so you can focus on the logic, not the setup.
+```markdown
+Whether you're sketching a complex microservices mesh or a simple state machine, Trace bridges the gap between high-level design and low-level implementation. No more manual mapping of boxes to classes or arrows to API endpoints—Trace handles the structural heavy lifting, turning your visual artifacts into a living, breathing codebase.
+```
 
 ---
 
