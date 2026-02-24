@@ -62,31 +62,40 @@ const cardVariants = {
     transition: {
       delay: i * 0.1,
       duration: 0.6,
-      ease: [0.21, 0.47, 0.32, 0.98],
+      ease: [0.21, 0.47, 0.32, 0.98] as [number, number, number, number],
     },
   }),
 };
 
 export default function FeatureCards() {
   return (
-    <section className="relative px-6 py-24 md:py-32">
-      <div className="max-w-6xl mx-auto">
+    <section style={{ padding: "6rem 1.5rem" }}>
+      <div style={{ maxWidth: "72rem", marginLeft: "auto", marginRight: "auto" }}>
         {/* Section header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.6 }}
-          className="text-center mb-16"
+          style={{ textAlign: "center", marginBottom: "4rem" }}
         >
-          <p className="text-sm font-semibold uppercase tracking-widest text-purple-400 mb-4">
+          <p
+            className="text-sm font-semibold uppercase tracking-widest text-purple-400 mb-4"
+            style={{ textAlign: "center" }}
+          >
             Everything you need
           </p>
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold text-slate-100 leading-tight">
+          <h2
+            className="text-3xl sm:text-4xl md:text-5xl font-bold text-slate-100 leading-tight"
+            style={{ textAlign: "center" }}
+          >
             Built for the way{" "}
             <span className="text-gradient">developers think</span>
           </h2>
-          <p className="mt-4 text-slate-400 text-lg max-w-xl mx-auto">
+          <p
+            className="mt-4 text-slate-400 text-lg"
+            style={{ maxWidth: "36rem", margin: "1rem auto 0", textAlign: "center" }}
+          >
             Trace bridges the gap between your mental model and working software.
           </p>
         </motion.div>
@@ -133,13 +142,13 @@ export default function FeatureCards() {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.6, delay: 0.3 }}
-          className="mt-20 grid grid-cols-2 md:grid-cols-4 gap-px bg-slate-800/50 rounded-2xl overflow-hidden border border-slate-800/50"
+          className="grid grid-cols-3 gap-px bg-slate-800/50 rounded-2xl overflow-hidden border border-slate-800/50"
+          style={{ marginTop: "5rem", maxWidth: "48rem", marginLeft: "auto", marginRight: "auto" }}
         >
           {[
             { value: "< 3s", label: "Avg. generation time" },
             { value: "12+", label: "Languages supported" },
             { value: "99.9%", label: "Uptime SLA" },
-            { value: "2K+", label: "Active builders" },
           ].map((stat) => (
             <div
               key={stat.label}

@@ -1,11 +1,17 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Geist } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({
   subsets: ["latin"],
   weight: ["300", "400", "500", "600", "700", "800", "900"],
   variable: "--font-inter",
+  display: "swap",
+});
+
+const geist = Geist({
+  subsets: ["latin"],
+  variable: "--font-geist",
   display: "swap",
 });
 
@@ -26,7 +32,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`dark ${inter.variable}`}>
+    <html lang="en" className={`dark ${inter.variable} ${geist.variable}`}>
       <body className={`antialiased noise-overlay ${inter.className}`}>
         {children}
       </body>
