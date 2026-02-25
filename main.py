@@ -48,34 +48,65 @@ def strip_json_markdown(text: str) -> str:
 
 def _parse_json_objects(raw: str, required_keys: set) -> List[dict]:
     """
-    Generic parser: tries JSON-array first, then line-by-line scan.
-    Only keeps objects that have all `required_keys`.
+    Robustly extracts JSON objects from Gemini's response regardless of how
+    it is wrapped (markdown fences, prose paragraphs, mixed content, etc.).
+
+    Strategy:
+      1. Strip outer markdown fences.
+      2. Try to json.loads the whole thing as an array or single object.
+      3. Use regex to find every {...} block anywhere in the text and parse each.
+    Only items that contain all `required_keys` are kept.
     """
     results: List[dict] = []
+    seen: set = set()
     cleaned = strip_json_markdown(raw)
 
-    # Attempt 1 — full JSON array
+    def _accept(item: dict) -> bool:
+        """Check required keys and dedup."""
+        if not required_keys.issubset(item):
+            return False
+        key = tuple(sorted((k, str(v)) for k, v in item.items() if k in required_keys))
+        if key in seen:
+            return False
+        seen.add(key)
+        return True
+
+    # Attempt 1 — whole payload is a JSON array
     try:
         data = json.loads(cleaned)
         if isinstance(data, list):
             for item in data:
-                if isinstance(item, dict) and required_keys.issubset(item):
+                if isinstance(item, dict) and _accept(item):
                     results.append(item)
-            return results
+            if results:
+                return results
+        elif isinstance(data, dict) and _accept(data):
+            return [data]
     except json.JSONDecodeError:
         pass
 
-    # Attempt 2 — line-by-line objects
-    for line in cleaned.splitlines():
-        line = line.strip().rstrip(",")
-        if not line.startswith("{"):
+    # Attempt 2 — regex: find every {...} block (handles nested braces)
+    # Walk character-by-character to extract balanced brace blocks
+    i, n = 0, len(cleaned)
+    while i < n:
+        if cleaned[i] != "{":
+            i += 1
             continue
+        depth, j = 0, i
+        while j < n:
+            if cleaned[j] == "{": depth += 1
+            elif cleaned[j] == "}": depth -= 1
+            if depth == 0:
+                break
+            j += 1
+        candidate = cleaned[i:j + 1]
         try:
-            item = json.loads(line)
-            if required_keys.issubset(item):
+            item = json.loads(candidate)
+            if isinstance(item, dict) and _accept(item):
                 results.append(item)
         except json.JSONDecodeError:
-            continue
+            pass
+        i = j + 1
 
     return results
 
@@ -112,29 +143,30 @@ def parse_edges_from_json(raw: str) -> List[dict]:
 
 def vision_parser_node(state: TraceState):
     """
-    Two-pass Gemini Vision call:
-      Pass 1 — extract nodes (label / type / bbox)
-      Pass 2 — extract edges (from / to / action) by scanning arrows, lines, dotted lines
+    Single-pass Gemini Vision call (uses gemini-2.0-flash-lite for free-tier headroom).
+    Asks for a unified JSON object containing both 'nodes' and 'edges' arrays,
+    cutting API quota usage in half vs. the old two-pass approach.
     """
     print("--- TRACE VISION: ANALYZING DIAGRAM ---")
 
-    node_prompt = (
-        "Analyze this diagram. "
-        "List every node (box, circle, cylinder, actor figure, cloud shape, etc.). "
-        "For each node output exactly one JSON object per line:\n"
-        '{"label": "NAME", "type": "TYPE", "bbox": [ymin, xmin, ymax, xmax]}\n'
-        "TYPE must be one of: Actor, Process, Database, Interface.\n"
-        "Output ONLY the JSON objects — no prose, no markdown fences."
-    )
-
-    edge_prompt = (
-        "Analyze this diagram. "
-        "Identify every arrow, directed line, dotted line, or labelled connector between nodes. "
-        "For each connection output exactly one JSON object per line:\n"
-        '{"from": "SOURCE_LABEL", "to": "TARGET_LABEL", "action": "VERB_OR_LABEL_ON_LINE"}\n'
-        "Use the exact node labels you can read in the diagram. "
-        "If no label is on the arrow, infer a short verb (e.g. 'calls', 'reads', 'sends'). "
-        "Output ONLY the JSON objects — no prose, no markdown fences."
+    unified_prompt = (
+        "You are a diagram parser. Analyze the image carefully.\n\n"
+        "Return ONLY a single valid JSON object — no prose, no markdown fences — in this exact schema:\n"
+        "{\n"
+        '  "nodes": [\n'
+        '    {"label": "NODE_NAME", "type": "TYPE", "bbox": [ymin, xmin, ymax, xmax]}\n'
+        "  ],\n"
+        '  "edges": [\n'
+        '    {"from": "SOURCE_LABEL", "to": "TARGET_LABEL", "action": "VERB_OR_LINE_LABEL"}\n'
+        "  ]\n"
+        "}\n\n"
+        "Rules:\n"
+        "- 'nodes': every box, circle, cylinder, actor, or cloud in the diagram.\n"
+        "  type must be one of: Actor, Process, Database, Interface.\n"
+        "- 'edges': every arrow, line, or dotted connector between nodes.\n"
+        "  Use the exact labels visible in the diagram; infer a verb if no label exists.\n"
+        "- bbox values are normalised floats 0-1 (ymin, xmin, ymax, xmax).\n"
+        "- Do NOT output anything except the JSON object."
     )
 
     fallback_node  = [{"label": "Unknown Component", "type": "Process", "bbox": []}]
@@ -143,40 +175,61 @@ def vision_parser_node(state: TraceState):
     try:
         img = Image.open(io.BytesIO(state["image_bytes"]))
 
-        # ── Pass 1: Nodes ────────────────────────────────────────────────────
-        node_resp = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=[node_prompt, img],
+        resp     = client.models.generate_content(
+            model="gemini-2.0-flash-lite",
+            contents=[unified_prompt, img],
         )
-        node_raw  = node_resp.text
-        print(f"[Node pass] raw ({len(node_raw)} chars): {node_raw[:200]}...")
-        entities  = parse_entities_from_json(node_raw)
+        raw_text = resp.text
+        print(f"[Vision] raw ({len(raw_text)} chars): {raw_text[:300]}...")
+
+        # ── Parse unified response ───────────────────────────────────────────
+        cleaned = strip_json_markdown(raw_text)
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            # Try to salvage by finding the outermost {...} block
+            m = re.search(r"\{.*\}", cleaned, re.DOTALL)
+            data = json.loads(m.group(0)) if m else {}
+
+        raw_nodes = data.get("nodes", []) if isinstance(data, dict) else []
+        raw_edges = data.get("edges", []) if isinstance(data, dict) else []
+
+        entities: List[dict] = [
+            {"label": str(n["label"]), "type": str(n.get("type", "Process")), "bbox": n.get("bbox", [])}
+            for n in raw_nodes if isinstance(n, dict) and "label" in n
+        ]
+        edges: List[dict] = [
+            {"from": str(e["from"]), "to": str(e["to"]), "action": str(e.get("action", "connects"))}
+            for e in raw_edges if isinstance(e, dict) and "from" in e and "to" in e
+        ]
+
+        # If the top-level parse found nothing, fall back to the robust scanner
         if not entities:
-            print("Node JSON parse failed — using fallback")
+            print("Unified parse yielded 0 nodes — running fallback scanner...")
+            entities = parse_entities_from_json(raw_text)
+        if not edges:
+            edges = parse_edges_from_json(raw_text)
+        if not entities:
             entities = fallback_node
 
-        # ── Pass 2: Edges ────────────────────────────────────────────────────
-        edge_resp = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=[edge_prompt, img],
-        )
-        edge_raw = edge_resp.text
-        print(f"[Edge pass] raw ({len(edge_raw)} chars): {edge_raw[:200]}...")
-        edges    = parse_edges_from_json(edge_raw)
         print(f"Parsed {len(entities)} nodes, {len(edges)} edges")
-
         return {
             "rectangles": entities,
             "edges":      edges,
-            "gemini_raw": node_raw,
+            "gemini_raw": raw_text,
         }
 
     except Exception as e:
-        print(f"Gemini vision error: {e}")
+        err_str = str(e)
+        print(f"Gemini vision error: {err_str[:200]}")
+        # Re-raise quota/rate-limit errors so the API returns a proper HTTP error
+        # instead of silently showing 'Unknown Component' to the user.
+        if "RESOURCE_EXHAUSTED" in err_str or "429" in err_str:
+            raise
         return {
             "rectangles": fallback_node,
             "edges":      fallback_edges,
-            "gemini_raw": f"[API unavailable: {str(e)[:120]}]",
+            "gemini_raw": f"[API unavailable: {err_str[:200]}]",
         }
 
 
@@ -404,8 +457,17 @@ async def chat_with_trace(
             "generated_code": result.get("generated_code", ""),
         }
     except Exception as e:
-        print(f"Endpoint error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        err_str = str(e)
+        print(f"Endpoint error: {err_str[:200]}")
+        if "RESOURCE_EXHAUSTED" in err_str or "429" in err_str:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Gemini API quota exhausted (free tier limit reached). "
+                    "Please wait a minute and try again, or add billing to your Google AI Studio account."
+                ),
+            )
+        raise HTTPException(status_code=500, detail=err_str[:300])
 
 
 if __name__ == "__main__":
