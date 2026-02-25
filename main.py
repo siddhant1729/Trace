@@ -25,12 +25,13 @@ client = genai.Client(api_key=API_KEY)
 # 1. State
 # ─────────────────────────────────────────
 class TraceState(TypedDict):
-    user_query: str
-    image_bytes: bytes
-    rectangles: List[dict]   # Parsed entities from the diagram
-    gemini_raw: str           # Raw Gemini text (for RAG context)
-    response: str
-    generated_code: str       # Trace-to-Code output
+    user_query:     str
+    image_bytes:    bytes
+    rectangles:     List[dict]   # Parsed nodes  {"label", "type", "bbox"}
+    edges:          List[dict]   # Parsed edges  {"from", "to", "action"}
+    gemini_raw:     str          # Raw Gemini text (node pass)
+    response:       str
+    generated_code: str          # Trace-to-Code output
 
 
 # ─────────────────────────────────────────
@@ -38,60 +39,71 @@ class TraceState(TypedDict):
 # ─────────────────────────────────────────
 
 def strip_json_markdown(text: str) -> str:
-    """
-    Strips ```json ... ``` or ``` ... ``` fences from Gemini responses
-    so we get clean, parseable JSON/text.
-    """
-    # Remove leading/trailing whitespace
+    """Strips ```json ... ``` or ``` ... ``` fences from Gemini responses."""
     text = text.strip()
-    # Strip code-fence blocks like ```json\n...\n``` or ```\n...\n```
     text = re.sub(r"^```(?:json)?\s*\n?", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\n?```\s*$", "", text)
     return text.strip()
 
 
-def parse_entities_from_json(raw: str) -> List[dict]:
+def _parse_json_objects(raw: str, required_keys: set) -> List[dict]:
     """
-    Parses Gemini's structured JSON response into entity dicts.
-    Expected format (one item per line or as a JSON array):
-      {"label": "NAME", "type": "TYPE", "bbox": [ymin, xmin, ymax, xmax]}
-    Falls back to an empty list on any error.
+    Generic parser: tries JSON-array first, then line-by-line scan.
+    Only keeps objects that have all `required_keys`.
     """
-    entities: List[dict] = []
+    results: List[dict] = []
     cleaned = strip_json_markdown(raw)
 
-    # Try to parse as a JSON array first
+    # Attempt 1 — full JSON array
     try:
         data = json.loads(cleaned)
         if isinstance(data, list):
             for item in data:
-                if isinstance(item, dict) and "label" in item and "type" in item:
-                    entities.append({
-                        "label": str(item["label"]),
-                        "type":  str(item["type"]),
-                        "bbox":  item.get("bbox", []),
-                    })
-            return entities
+                if isinstance(item, dict) and required_keys.issubset(item):
+                    results.append(item)
+            return results
     except json.JSONDecodeError:
         pass
 
-    # Fallback: scan line-by-line for individual JSON objects
+    # Attempt 2 — line-by-line objects
     for line in cleaned.splitlines():
         line = line.strip().rstrip(",")
         if not line.startswith("{"):
             continue
         try:
             item = json.loads(line)
-            if "label" in item and "type" in item:
-                entities.append({
-                    "label": str(item["label"]),
-                    "type":  str(item["type"]),
-                    "bbox":  item.get("bbox", []),
-                })
+            if required_keys.issubset(item):
+                results.append(item)
         except json.JSONDecodeError:
             continue
 
-    return entities
+    return results
+
+
+def parse_entities_from_json(raw: str) -> List[dict]:
+    """Returns node dicts with keys: label, type, bbox."""
+    raw_items = _parse_json_objects(raw, {"label", "type"})
+    return [
+        {
+            "label": str(it["label"]),
+            "type":  str(it["type"]),
+            "bbox":  it.get("bbox", []),
+        }
+        for it in raw_items
+    ]
+
+
+def parse_edges_from_json(raw: str) -> List[dict]:
+    """Returns edge dicts with keys: from, to, action."""
+    raw_items = _parse_json_objects(raw, {"from", "to"})
+    return [
+        {
+            "from":   str(it["from"]),
+            "to":     str(it["to"]),
+            "action": str(it.get("action", "connects")),
+        }
+        for it in raw_items
+    ]
 
 
 # ─────────────────────────────────────────
@@ -100,65 +112,105 @@ def parse_entities_from_json(raw: str) -> List[dict]:
 
 def vision_parser_node(state: TraceState):
     """
-    Uses Gemini Vision with a structured prompt to extract diagram entities
-    as machine-readable JSON objects rather than free-form prose.
+    Two-pass Gemini Vision call:
+      Pass 1 — extract nodes (label / type / bbox)
+      Pass 2 — extract edges (from / to / action) by scanning arrows, lines, dotted lines
     """
     print("--- TRACE VISION: ANALYZING DIAGRAM ---")
 
-    structured_prompt = (
-        'List every node in this diagram. For each node, output exactly one JSON object '
-        'on its own line with these keys: '
-        '{"label": "NAME", "type": "TYPE", "bbox": [ymin, xmin, ymax, xmax]}. '
-        'TYPE must be one of: Actor, Process, Database, Interface. '
-        'Do NOT add any prose, headers, or markdown fences — only the JSON objects.'
+    node_prompt = (
+        "Analyze this diagram. "
+        "List every node (box, circle, cylinder, actor figure, cloud shape, etc.). "
+        "For each node output exactly one JSON object per line:\n"
+        '{"label": "NAME", "type": "TYPE", "bbox": [ymin, xmin, ymax, xmax]}\n'
+        "TYPE must be one of: Actor, Process, Database, Interface.\n"
+        "Output ONLY the JSON objects — no prose, no markdown fences."
     )
+
+    edge_prompt = (
+        "Analyze this diagram. "
+        "Identify every arrow, directed line, dotted line, or labelled connector between nodes. "
+        "For each connection output exactly one JSON object per line:\n"
+        '{"from": "SOURCE_LABEL", "to": "TARGET_LABEL", "action": "VERB_OR_LABEL_ON_LINE"}\n'
+        "Use the exact node labels you can read in the diagram. "
+        "If no label is on the arrow, infer a short verb (e.g. 'calls', 'reads', 'sends'). "
+        "Output ONLY the JSON objects — no prose, no markdown fences."
+    )
+
+    fallback_node  = [{"label": "Unknown Component", "type": "Process", "bbox": []}]
+    fallback_edges: List[dict] = []
 
     try:
         img = Image.open(io.BytesIO(state["image_bytes"]))
-        response = client.models.generate_content(
+
+        # ── Pass 1: Nodes ────────────────────────────────────────────────────
+        node_resp = client.models.generate_content(
             model="gemini-1.5-flash",
-            contents=[structured_prompt, img],
+            contents=[node_prompt, img],
         )
-        raw_text = response.text
-        print(f"Gemini Raw: {raw_text[:300]}...")
-        entities = parse_entities_from_json(raw_text)
-
+        node_raw  = node_resp.text
+        print(f"[Node pass] raw ({len(node_raw)} chars): {node_raw[:200]}...")
+        entities  = parse_entities_from_json(node_raw)
         if not entities:
-            # Last-resort fallback when JSON parsing fully fails
-            print("JSON parse failed — using fallback prose labels")
-            entities = [{"label": "Unknown Component", "type": "Process", "bbox": []}]
+            print("Node JSON parse failed — using fallback")
+            entities = fallback_node
 
-        return {"rectangles": entities, "gemini_raw": raw_text}
+        # ── Pass 2: Edges ────────────────────────────────────────────────────
+        edge_resp = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=[edge_prompt, img],
+        )
+        edge_raw = edge_resp.text
+        print(f"[Edge pass] raw ({len(edge_raw)} chars): {edge_raw[:200]}...")
+        edges    = parse_edges_from_json(edge_raw)
+        print(f"Parsed {len(entities)} nodes, {len(edges)} edges")
+
+        return {
+            "rectangles": entities,
+            "edges":      edges,
+            "gemini_raw": node_raw,
+        }
 
     except Exception as e:
         print(f"Gemini vision error: {e}")
         return {
-            "rectangles": [{"label": "Unknown Component", "type": "Process", "bbox": []}],
+            "rectangles": fallback_node,
+            "edges":      fallback_edges,
             "gemini_raw": f"[API unavailable: {str(e)[:120]}]",
         }
 
 
 def rag_node(state: TraceState):
     """
-    Answers the user query using detected entities and Gemini's raw analysis.
+    Answers the user query using detected entities, edges, and Gemini's raw analysis.
     """
-    query   = state["user_query"]
+    query    = state["user_query"]
     entities = state["rectangles"]
-    raw     = state.get("gemini_raw", "")
-    labels  = [e["label"] for e in entities]
+    edges    = state.get("edges", [])
+    raw      = state.get("gemini_raw", "")
+    labels   = [e["label"] for e in entities]
 
     if not entities:
         return {"response": "No entities detected. Please upload a clearer diagram."}
 
+    edge_summary = ""
+    if edges:
+        lines = [f"  {ed['from']} --[{ed['action']}]--> {ed['to']}" for ed in edges]
+        edge_summary = "\n\nDetected relationships:\n" + "\n".join(lines)
+
     if raw and not raw.startswith("[API"):
         response = (
-            f"Based on your diagram, I identified: {', '.join(labels)}.\n\n"
+            f"Based on your diagram, I identified: {', '.join(labels)}.{edge_summary}\n\n"
             f'Regarding "{query}":\n{raw[:400]}'
         )
     else:
         q = query.lower()
         if "flow" in q or "work" in q or "how" in q:
-            response = f"The diagram shows the following flow: {' → '.join(labels)}."
+            if edges:
+                flow = " → ".join(f"{ed['from']} ({ed['action']}) {ed['to']}" for ed in edges)
+                response = f"The diagram shows this flow:\n{flow}"
+            else:
+                response = f"The diagram shows the following components: {' → '.join(labels)}."
         elif len(labels) >= 2:
             response = (
                 f"Your diagram contains: {labels}. "
@@ -172,69 +224,128 @@ def rag_node(state: TraceState):
 
 def code_gen_node(state: TraceState):
     """
-    Trace-to-Code: inspects the detected entities and generates boilerplate code.
-
-    Rules:
-      - Database entity  → SQL CREATE TABLE DDL
-      - Actor + Process  → Python FastAPI endpoint skeleton
-      - Default          → plain summary comment block
+    Trace-to-Code (Relational Edition):
+    - Database nodes       → SQL CREATE TABLE DDL
+    - DB → DB edge         → FOREIGN KEY constraint
+    - Actor + Process      → FastAPI endpoint skeleton
+    - Actor → Process edge → endpoint accepts actor_id path parameter
+    - Default              → comment summary
     """
-    print("--- TRACE CODE GEN: GENERATING BOILERPLATE ---")
+    print("--- TRACE CODE GEN: GENERATING PROJECT SKELETON ---")
 
     entities = state["rectangles"]
+    edges    = state.get("edges", [])
     types    = {e["type"] for e in entities}
     labels   = [e["label"] for e in entities]
 
-    code_lines: List[str] = []
+    def safe_id(name: str) -> str:
+        return re.sub(r"[^A-Za-z0-9_]", "_", name)
 
-    # ── SQL DDL for Database nodes ──────────────────────────────────────────
+    def safe_class(name: str) -> str:
+        return re.sub(r"[^A-Za-z0-9]", "", name)
+
+    code_sections: List[str] = []
+
+    # ── SQL DDL ──────────────────────────────────────────────────────────────
     db_nodes = [e for e in entities if e["type"] == "Database"]
     if db_nodes:
-        code_lines.append("-- SQL DDL  (auto-generated by Trace)\n")
+        sql_lines: List[str] = ["-- ============================================================\n",
+                                "-- SQL DDL  (auto-generated by Trace)\n",
+                                "-- ============================================================\n\n"]
+
+        # CREATE TABLE for every DB node
         for node in db_nodes:
-            table = re.sub(r"[^A-Za-z0-9_]", "_", node["label"])
-            code_lines.append(
-                f"CREATE TABLE IF NOT EXISTS {table} (\n"
+            tbl = safe_id(node["label"])
+            sql_lines.append(
+                f"CREATE TABLE IF NOT EXISTS {tbl} (\n"
                 f"    id          SERIAL PRIMARY KEY,\n"
-                f"    created_at  TIMESTAMP DEFAULT NOW(),\n"
-                f"    -- TODO: add columns for {node['label']}\n"
-                f");\n"
+                f"    created_at  TIMESTAMP DEFAULT NOW()\n"
+                f"    -- TODO: add columns for '{node['label']}'\n"
+                f");\n\n"
             )
 
-    # ── FastAPI endpoint for Actor + Process combos ──────────────────────────
+        # FOREIGN KEYs for DB → DB edges
+        fk_edges = [
+            ed for ed in edges
+            if any(e["label"] == ed["from"] and e["type"] == "Database" for e in entities)
+            and any(e["label"] == ed["to"]   and e["type"] == "Database" for e in entities)
+        ]
+        if fk_edges:
+            sql_lines.append("-- Relationships\n")
+            for ed in fk_edges:
+                src = safe_id(ed["from"])
+                tgt = safe_id(ed["to"])
+                sql_lines.append(
+                    f"ALTER TABLE {src}\n"
+                    f"    ADD COLUMN  {tgt}_id INT REFERENCES {tgt}(id)  -- {ed['action']}\n"
+                    f"    ON DELETE SET NULL;\n\n"
+                )
+
+        code_sections.append("".join(sql_lines))
+
+    # ── FastAPI skeleton ──────────────────────────────────────────────────────
     if "Actor" in types and "Process" in types:
         actor_nodes   = [e for e in entities if e["type"] == "Actor"]
         process_nodes = [e for e in entities if e["type"] == "Process"]
 
-        if code_lines:
-            code_lines.append("\n")
+        py_lines: List[str] = [
+            "# ============================================================\n",
+            "# FastAPI Project Skeleton  (auto-generated by Trace)\n",
+            "# ============================================================\n\n",
+            "from fastapi import FastAPI, HTTPException\n",
+            "from pydantic import BaseModel\n",
+            "from typing import Optional\n\n",
+            "app = FastAPI(title=\"Trace Generated API\")\n\n",
+        ]
 
-        code_lines.append("# FastAPI skeleton  (auto-generated by Trace)\n\n")
-        code_lines.append("from fastapi import FastAPI, HTTPException\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n")
+        # Build a lookup: which actor(s) connect to which process via edges
+        actor_for_proc: dict = {}
+        for ed in edges:
+            frm_actor = next((e for e in actor_nodes   if e["label"] == ed["from"]), None)
+            to_proc   = next((e for e in process_nodes if e["label"] == ed["to"]),   None)
+            if frm_actor and to_proc:
+                actor_for_proc[to_proc["label"]] = (frm_actor["label"], ed["action"])
 
         for proc in process_nodes:
-            route = "/" + re.sub(r"[^A-Za-z0-9]", "_", proc["label"]).lower()
-            actor_label = actor_nodes[0]["label"] if actor_nodes else "Client"
-            code_lines.append(
-                f"class {re.sub(r'[^A-Za-z0-9]', '', proc['label'])}Request(BaseModel):\n"
-                f"    # TODO: define request body for {actor_label}\n"
+            cls       = safe_class(proc["label"])
+            route     = "/" + safe_id(proc["label"]).lower()
+            actor_info = actor_for_proc.get(proc["label"])
+
+            if actor_info:
+                actor_label, action_verb = actor_info
+                actor_id_param = f"\n    {safe_id(actor_label).lower()}_id: int,  # from edge: {action_verb}"
+                actor_comment  = f"Triggered by '{actor_label}' via '{action_verb}'"
+            else:
+                actor_id_param = ""
+                actor_comment  = "No direct actor edge detected"
+
+            py_lines.append(
+                f"class {cls}Request(BaseModel):\n"
+                f"    # TODO: define fields  ({actor_comment})\n"
                 f"    pass\n\n"
                 f"@app.post(\"{route}\")\n"
-                f"async def {re.sub(r'[^A-Za-z0-9_]', '_', proc['label']).lower()}(\n"
-                f"    request: {re.sub(r'[^A-Za-z0-9]', '', proc['label'])}Request,\n"
+                f"async def {safe_id(proc['label']).lower()}({actor_id_param}\n"
+                f"    request: {cls}Request,\n"
                 f"):\n"
-                f"    # TODO: implement logic triggered by {actor_label}\n"
-                f"    return {{\"status\": \"ok\"}}\n\n"
+                f"    \"\"\"\n"
+                f"    {actor_comment}\n"
+                f"    Process: {proc['label']}\n"
+                f"    \"\"\"\n"
+                f"    # TODO: implement\n"
+                f"    return {{\"status\": \"ok\"}}\n\n\n"
             )
 
-    # ── Default: nothing diagnosable, emit a comment summary ────────────────
-    if not code_lines:
-        code_lines.append(
+        code_sections.append("".join(py_lines))
+
+    # ── Default fallback ─────────────────────────────────────────────────────
+    if not code_sections:
+        code_sections.append(
             f"# Trace detected: {', '.join(labels)}\n"
-            f"# No code template matched. Add more specific node types (Database, Actor + Process).\n"
+            f"# Edges: {[(ed['from'], ed['action'], ed['to']) for ed in edges]}\n"
+            f"# No code template matched — add Database or (Actor + Process) nodes.\n"
         )
 
-    generated_code = "".join(code_lines)
+    generated_code = "\n".join(code_sections)
     print(f"Generated code ({len(generated_code)} chars)")
     return {"generated_code": generated_code}
 
@@ -280,6 +391,7 @@ async def chat_with_trace(
             "user_query":     query,
             "image_bytes":    image_data,
             "rectangles":     [],
+            "edges":          [],
             "gemini_raw":     "",
             "response":       "",
             "generated_code": "",
@@ -288,6 +400,7 @@ async def chat_with_trace(
         return {
             "reply":          result["response"],
             "entities":       result["rectangles"],
+            "edges":          result.get("edges", []),
             "generated_code": result.get("generated_code", ""),
         }
     except Exception as e:
