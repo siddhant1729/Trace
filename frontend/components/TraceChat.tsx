@@ -2,28 +2,36 @@
 
 import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, Send, Terminal, X, ImageIcon } from "lucide-react";
+import { Upload, Send, Terminal, X, ImageIcon, Code2 } from "lucide-react";
+
+interface Entity {
+  label: string;
+  type: string;
+  bbox?: number[];
+}
 
 interface TraceResponse {
   reply: string;
-  entities: { label: string; type: string }[];
+  entities: Entity[];
+  generated_code?: string;
 }
 
 const typeColors: Record<string, string> = {
-  Actor: "bg-blue-500/20 text-blue-300 border-blue-500/30",
-  Process: "bg-violet-500/20 text-violet-300 border-violet-500/30",
-  Database: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+  Actor:     "bg-blue-500/20 text-blue-300 border-blue-500/30",
+  Process:   "bg-violet-500/20 text-violet-300 border-violet-500/30",
+  Database:  "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
   Interface: "bg-amber-500/20 text-amber-300 border-amber-500/30",
 };
 const defaultColor = "bg-slate-500/20 text-slate-300 border-slate-500/30";
 
 export default function TraceChat() {
-  const [query, setQuery] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  const [query, setQuery]     = useState("");
+  const [file, setFile]       = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<TraceResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [result, setResult]   = useState<TraceResponse | null>(null);
+  const [error, setError]     = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [showCode, setShowCode] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFile = (f: File) => {
@@ -43,12 +51,13 @@ export default function TraceChat() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file) { setError("Please upload a diagram image first."); return; }
+    if (!file)        { setError("Please upload a diagram image first."); return; }
     if (!query.trim()) { setError("Please enter a query."); return; }
 
     setLoading(true);
     setError(null);
     setResult(null);
+    setShowCode(false);
 
     try {
       const form = new FormData();
@@ -199,6 +208,7 @@ export default function TraceChat() {
               className="border-t border-white/[0.06]"
             >
               <div className="p-5 space-y-4 bg-black/40">
+
                 {/* Reply */}
                 <div className="font-mono text-sm space-y-2">
                   <div className="flex items-center gap-2 text-slate-600 text-xs mb-3">
@@ -212,24 +222,65 @@ export default function TraceChat() {
                   <span className="inline-block w-2 h-4 bg-green-400 opacity-70 animate-pulse" />
                 </div>
 
-                {/* Entities */}
+                {/* Detected Entities with Type badges */}
                 {result.entities.length > 0 && (
                   <div className="pt-3 border-t border-white/[0.04]">
-                    <p className="text-xs text-slate-600 font-mono mb-2">detected entities</p>
+                    <p className="text-xs text-slate-600 font-mono mb-2">
+                      detected entities — {result.entities.length} node{result.entities.length !== 1 ? "s" : ""} found
+                    </p>
                     <div className="flex flex-wrap gap-2">
                       {result.entities.map((e, i) => (
-                        <span
+                        <motion.span
                           key={i}
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-mono ${typeColors[e.type] ?? defaultColor}`}
+                          initial={{ opacity: 0, scale: 0.85 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          transition={{ delay: i * 0.04 }}
+                          title={e.bbox && e.bbox.length === 4
+                            ? `bbox: [${e.bbox.join(", ")}]`
+                            : undefined}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-mono cursor-default ${typeColors[e.type] ?? defaultColor}`}
                         >
-                          <span className="opacity-50">{e.type}</span>
-                          <span>·</span>
-                          {e.label}
-                        </span>
+                          {/* Type badge */}
+                          <span className="px-1 py-0.5 rounded text-[10px] font-bold bg-black/30 opacity-80 tracking-wide uppercase">
+                            {e.type}
+                          </span>
+                          <span className="opacity-40">·</span>
+                          <span>{e.label}</span>
+                        </motion.span>
                       ))}
                     </div>
                   </div>
                 )}
+
+                {/* Generated Code */}
+                {result.generated_code && (
+                  <div className="pt-3 border-t border-white/[0.04]">
+                    <button
+                      onClick={() => setShowCode((v) => !v)}
+                      className="flex items-center gap-2 text-xs text-slate-500 font-mono hover:text-violet-400 transition-colors mb-2 group"
+                    >
+                      <Code2 className="w-3.5 h-3.5 group-hover:text-violet-400" />
+                      <span>trace-to-code</span>
+                      <span className="text-slate-700 ml-1">{showCode ? "▲ hide" : "▼ show"}</span>
+                    </button>
+                    <AnimatePresence>
+                      {showCode && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          exit={{ opacity: 0, height: 0 }}
+                          transition={{ duration: 0.25 }}
+                          className="overflow-hidden"
+                        >
+                          <pre className="rounded-xl bg-[#0d0d14] border border-white/[0.06] p-4 text-xs text-violet-200 font-mono leading-relaxed overflow-x-auto whitespace-pre-wrap">
+                            {result.generated_code}
+                          </pre>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                )}
+
               </div>
             </motion.div>
           )}
