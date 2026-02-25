@@ -7,7 +7,7 @@ const features = [
   {
     icon: Zap,
     title: "Instant Code Generation",
-    description: "From flowchart to fully-typed, production-ready code in under 3 seconds.",
+    description: "Flowchart to production-ready code in under 3 seconds.",
     color: "from-yellow-500/20 to-orange-500/10",
     iconColor: "text-yellow-400",
     borderColor: "hover:border-yellow-500/30",
@@ -15,7 +15,7 @@ const features = [
   {
     icon: GitBranch,
     title: "Smart Architecture",
-    description: "Trace understands context and generates code that follows your project's patterns.",
+    description: "Generates code that matches your project's existing patterns.",
     color: "from-indigo-500/20 to-blue-500/10",
     iconColor: "text-indigo-400",
     borderColor: "hover:border-indigo-500/30",
@@ -23,7 +23,7 @@ const features = [
   {
     icon: Layers,
     title: "Any Diagram Format",
-    description: "Supports Mermaid, draw.io, Figma exports, hand-drawn sketches, and more.",
+    description: "Mermaid, draw.io, Figma exports, or hand-drawn sketches.",
     color: "from-purple-500/20 to-violet-500/10",
     iconColor: "text-purple-400",
     borderColor: "hover:border-purple-500/30",
@@ -31,7 +31,7 @@ const features = [
   {
     icon: Code2,
     title: "Multi-Language Output",
-    description: "Python, TypeScript, Go, Rust — output in any language with idiomatic code.",
+    description: "Python, TypeScript, Go, Rust — idiomatic code, your language.",
     color: "from-emerald-500/20 to-teal-500/10",
     iconColor: "text-emerald-400",
     borderColor: "hover:border-emerald-500/30",
@@ -39,7 +39,7 @@ const features = [
   {
     icon: Cpu,
     title: "AI-Powered Reasoning",
-    description: "Backed by a frontier reasoning model that deeply understands system design.",
+    description: "A frontier model that truly understands system design.",
     color: "from-rose-500/20 to-pink-500/10",
     iconColor: "text-rose-400",
     borderColor: "hover:border-rose-500/30",
@@ -47,7 +47,7 @@ const features = [
   {
     icon: Globe,
     title: "Deploy Anywhere",
-    description: "Output code ready for Vercel, AWS, GCP, or any custom infrastructure.",
+    description: "Ready for Vercel, AWS, GCP, or any custom infrastructure.",
     color: "from-cyan-500/20 to-sky-500/10",
     iconColor: "text-cyan-400",
     borderColor: "hover:border-cyan-500/30",
@@ -70,7 +70,7 @@ const cardVariants = {
 export default function FeatureCards() {
   return (
     <section style={{ padding: "6rem 1.5rem" }}>
-      <div style={{ maxWidth: "72rem", marginLeft: "auto", marginRight: "auto" }}>
+      <div style={{ maxWidth: "80rem", marginLeft: "auto", marginRight: "auto" }}>
         {/* Section header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -100,8 +100,8 @@ export default function FeatureCards() {
           </p>
         </motion.div>
 
-        {/* Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        {/* Grid — 2 columns on desktop gives each card real breathing room */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
           {features.map((feature, i) => {
             const Icon = feature.icon;
             return (
@@ -113,24 +113,29 @@ export default function FeatureCards() {
                 whileInView="visible"
                 viewport={{ once: true }}
                 whileHover={{ y: -4, transition: { duration: 0.2 } }}
-                className={`relative group p-6 rounded-2xl border border-slate-800/80 bg-slate-900/40 backdrop-blur-sm transition-all duration-300 ${feature.borderColor} cursor-default`}
+                className={`relative group p-8 rounded-2xl border border-slate-800/80 bg-slate-900/40 backdrop-blur-sm transition-all duration-300 ${feature.borderColor} cursor-default`}
               >
                 {/* Inner gradient bg */}
                 <div
                   className={`absolute inset-0 rounded-2xl bg-gradient-to-br ${feature.color} opacity-0 group-hover:opacity-100 transition-opacity duration-300`}
                 />
 
-                {/* Icon */}
-                <div className="relative z-10 inline-flex items-center justify-center w-11 h-11 rounded-xl bg-slate-800/80 border border-slate-700/50 mb-4 group-hover:border-slate-600/50 transition-colors duration-200">
-                  <Icon className={`w-5 h-5 ${feature.iconColor}`} />
-                </div>
+                <div className="relative z-10 flex items-start gap-6">
+                  {/* Icon */}
+                  <div className="shrink-0 inline-flex items-center justify-center w-12 h-12 rounded-xl bg-slate-800/80 border border-slate-700/50 group-hover:border-slate-600/50 transition-colors duration-200">
+                    <Icon className={`w-5 h-5 ${feature.iconColor}`} />
+                  </div>
 
-                <h3 className="relative z-10 text-slate-100 font-semibold text-lg mb-2">
-                  {feature.title}
-                </h3>
-                <p className="relative z-10 text-slate-400 text-sm leading-relaxed">
-                  {feature.description}
-                </p>
+                  {/* Text content moved to the right of the icon */}
+                  <div className="flex-1">
+                    <h3 className="text-slate-100 font-semibold text-lg mb-2">
+                      {feature.title}
+                    </h3>
+                    <p className="text-slate-400 leading-7" style={{ fontSize: "0.9rem" }}>
+                      {feature.description}
+                    </p>
+                  </div>
+                </div>
               </motion.div>
             );
           })}
