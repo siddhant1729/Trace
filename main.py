@@ -27,9 +27,9 @@ client = genai.Client(api_key=API_KEY)
 class TraceState(TypedDict):
     user_query:     str
     image_bytes:    bytes
-    rectangles:     List[dict]   # Parsed nodes  {"label", "type", "bbox"}
-    edges:          List[dict]   # Parsed edges  {"from", "to", "action"}
-    gemini_raw:     str          # Raw Gemini text (node pass)
+    rectangles:     List[dict]   # Parsed nodes  {"id", "label", "type", "bbox"}
+    edges:          List[dict]   # Parsed edges  {"from", "to", "label"}
+    gemini_raw:     str          # Raw Gemini text
     response:       str
     generated_code: str          # Trace-to-Code output
 
@@ -112,10 +112,11 @@ def _parse_json_objects(raw: str, required_keys: set) -> List[dict]:
 
 
 def parse_entities_from_json(raw: str) -> List[dict]:
-    """Returns node dicts with keys: label, type, bbox."""
-    raw_items = _parse_json_objects(raw, {"label", "type"})
+    """Returns node dicts with keys: id, label, type, bbox."""
+    raw_items = _parse_json_objects(raw, {"id", "label", "type"})
     return [
         {
+            "id":    str(it["id"]),
             "label": str(it["label"]),
             "type":  str(it["type"]),
             "bbox":  it.get("bbox", []),
@@ -125,16 +126,24 @@ def parse_entities_from_json(raw: str) -> List[dict]:
 
 
 def parse_edges_from_json(raw: str) -> List[dict]:
-    """Returns edge dicts with keys: from, to, action."""
+    """Returns edge dicts with keys: from, to, label."""
     raw_items = _parse_json_objects(raw, {"from", "to"})
     return [
         {
-            "from":   str(it["from"]),
-            "to":     str(it["to"]),
-            "action": str(it.get("action", "connects")),
+            "from":  str(it["from"]),
+            "to":    str(it["to"]),
+            "label": str(it.get("label", "connects")),
         }
         for it in raw_items
     ]
+
+
+def get_next_step(node_id, state):
+    """Finds which node an arrow points to from a specific ID."""
+    for edge in state.get('edges', []):
+        if edge['from'] == node_id:
+            return edge['to'], edge.get('label', '')
+    return None, None
 
 
 # ─────────────────────────────────────────
@@ -150,33 +159,32 @@ def vision_parser_node(state: TraceState):
     print("--- TRACE VISION: ANALYZING DIAGRAM ---")
 
     unified_prompt = (
-        "You are a diagram parser. Analyze the image carefully.\n\n"
-        "Return ONLY a single valid JSON object — no prose, no markdown fences — in this exact schema:\n"
+        "You are an expert flowchart parser. Analyze the diagram in the image.\n\n"
+        "Return ONLY a single valid JSON object following this schema. Do NOT include markdown fences or prose.\n"
         "{\n"
         '  "nodes": [\n'
-        '    {"label": "NODE_NAME", "type": "TYPE", "bbox": [ymin, xmin, ymax, xmax]}\n'
+        '    {"id": "n1", "label": "Text", "type": "Process|Decision|Actor|Database", "bbox": [ymin, xmin, ymax, xmax]}\n'
         "  ],\n"
         '  "edges": [\n'
-        '    {"from": "SOURCE_LABEL", "to": "TARGET_LABEL", "action": "VERB_OR_LINE_LABEL"}\n'
+        '    {"from": "node_id", "to": "node_id", "label": "Yes|No|Action"}\n'
         "  ]\n"
         "}\n\n"
         "Rules:\n"
-        "- 'nodes': every box, circle, cylinder, actor, or cloud in the diagram.\n"
-        "  type must be one of: Actor, Process, Database, Interface.\n"
-        "- 'edges': every arrow, line, or dotted connector between nodes.\n"
-        "  Use the exact labels visible in the diagram; infer a verb if no label exists.\n"
-        "- bbox values are normalised floats 0-1 (ymin, xmin, ymax, xmax).\n"
-        "- Do NOT output anything except the JSON object."
+        "- Identify EVERY process box, decision diamond, actor, and database.\n"
+        "- BBox values are 0-1000 integers [ymin, xmin, ymax, xmax].\n"
+        "- If an arrow has a 'Yes' or 'No' label, include it in the edge's 'label'.\n"
+        "- If it's a Decision node, ensure it has labeled outgoing edges."
     )
 
-    fallback_node  = [{"label": "Unknown Component", "type": "Process", "bbox": []}]
+    fallback_node  = [{"id": "n1", "label": "Unknown Component", "type": "Process", "bbox": []}]
     fallback_edges: List[dict] = []
 
     try:
         img = Image.open(io.BytesIO(state["image_bytes"]))
 
+        print(f"[Vision] Sending request to gemini-flash-latest (1.5)...")
         resp     = client.models.generate_content(
-            model="gemini-2.0-flash-lite",
+            model="gemini-flash-latest",
             contents=[unified_prompt, img],
         )
         raw_text = resp.text
@@ -192,14 +200,19 @@ def vision_parser_node(state: TraceState):
             data = json.loads(m.group(0)) if m else {}
 
         raw_nodes = data.get("nodes", []) if isinstance(data, dict) else []
-        raw_edges = data.get("edges", []) if isinstance(data, dict) else []
+        if not raw_nodes and isinstance(data, list):
+            # Maybe the model returned a list of objects instead of a wrapped object
+             raw_nodes = [item for item in data if "label" in item and "id" in item]
+             raw_edges = [item for item in data if "from" in item and "to" in item]
+        else:
+            raw_edges = data.get("edges", []) if isinstance(data, dict) else []
 
         entities: List[dict] = [
-            {"label": str(n["label"]), "type": str(n.get("type", "Process")), "bbox": n.get("bbox", [])}
-            for n in raw_nodes if isinstance(n, dict) and "label" in n
+            {"id": str(n["id"]), "label": str(n["label"]), "type": str(n.get("type", "Process")), "bbox": n.get("bbox", [])}
+            for n in raw_nodes if isinstance(n, dict) and "id" in n and "label" in n
         ]
         edges: List[dict] = [
-            {"from": str(e["from"]), "to": str(e["to"]), "action": str(e.get("action", "connects"))}
+            {"from": str(e["from"]), "to": str(e["to"]), "label": str(e.get("label", "connects"))}
             for e in raw_edges if isinstance(e, dict) and "from" in e and "to" in e
         ]
 
@@ -224,7 +237,7 @@ def vision_parser_node(state: TraceState):
         print(f"Gemini vision error: {err_str[:200]}")
         # Re-raise quota/rate-limit errors so the API returns a proper HTTP error
         # instead of silently showing 'Unknown Component' to the user.
-        if "RESOURCE_EXHAUSTED" in err_str or "429" in err_str:
+        if any(x in err_str for x in ["RESOURCE_EXHAUSTED", "429", "404", "NOT_FOUND"]):
             raise
         return {
             "rectangles": fallback_node,
@@ -236,53 +249,55 @@ def vision_parser_node(state: TraceState):
 def rag_node(state: TraceState):
     """
     Answers the user query using detected entities, edges, and Gemini's raw analysis.
+    Uses a second (text-only) Gemini pass to provide a human-readable explanation.
     """
     query    = state["user_query"]
     entities = state["rectangles"]
     edges    = state.get("edges", [])
-    raw      = state.get("gemini_raw", "")
-    labels   = [e["label"] for e in entities]
+    id_to_label = {e["id"]: e["label"] for e in entities}
+    labels      = [e["label"] for e in entities]
 
     if not entities:
         return {"response": "No entities detected. Please upload a clearer diagram."}
 
-    edge_summary = ""
-    if edges:
-        lines = [f"  {ed['from']} --[{ed['action']}]--> {ed['to']}" for ed in edges]
-        edge_summary = "\n\nDetected relationships:\n" + "\n".join(lines)
+    # 1. Build a text representation of the graph for Gemini
+    nodes_text = "\n".join([f"- {n['label']} ({n['type']})" for n in entities])
+    edges_text = "\n".join([f"- {id_to_label.get(e['from'], 'Unknown')} --[{e['label']}]--> {id_to_label.get(e['to'], 'Unknown')}" for e in edges])
+    
+    analysis_prompt = (
+        f"The user has uploaded a diagram and asked: \"{query}\"\n\n"
+        "Here is the parsed structure of the diagram:\n"
+        f"Nodes:\n{nodes_text}\n\n"
+        f"Relationships (Edges):\n{edges_text}\n\n"
+        "Please provide a concise, professional explanation of the diagram and answer the user's specific query. "
+        "Focus on the flow and logic. Do NOT mention IDs like 'n1'. Use the labels provided."
+    )
 
-    if raw and not raw.startswith("[API"):
-        response = (
-            f"Based on your diagram, I identified: {', '.join(labels)}.{edge_summary}\n\n"
-            f'Regarding "{query}":\n{raw[:400]}'
+    try:
+        # Use gemini-1.5-flash for the text analysis (usually has better quota for text-only)
+        resp = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=analysis_prompt,
         )
-    else:
-        q = query.lower()
-        if "flow" in q or "work" in q or "how" in q:
-            if edges:
-                flow = " → ".join(f"{ed['from']} ({ed['action']}) {ed['to']}" for ed in edges)
-                response = f"The diagram shows this flow:\n{flow}"
-            else:
-                response = f"The diagram shows the following components: {' → '.join(labels)}."
-        elif len(labels) >= 2:
-            response = (
-                f"Your diagram contains: {labels}. "
-                f'Ensure "{labels[1]}" correctly handles input from "{labels[0]}".'
-            )
-        else:
-            response = f"I detected '{labels[0]}'. Could you clarify what you'd like to know?"
+        response = resp.text
+    except Exception as e:
+        print(f"RAG Analysis error: {e}")
+        # Fallback to local summary if Gemini text pass fails
+        edge_summary = "\n".join([f"  {id_to_label.get(ed['from'], ed['from'])} --[{ed['label']}]--> {id_to_label.get(ed['to'], ed['to'])}" for ed in edges])
+        response = f"I identified the following components: {', '.join(labels)}.\n\nDetected relationships:\n{edge_summary}"
 
     return {"response": response}
 
 
 def code_gen_node(state: TraceState):
     """
-    Trace-to-Code (Relational Edition):
+    Trace-to-Code:
     - Database nodes       → SQL CREATE TABLE DDL
     - DB → DB edge         → FOREIGN KEY constraint
     - Actor + Process      → FastAPI endpoint skeleton
     - Actor → Process edge → endpoint accepts actor_id path parameter
-    - Default              → comment summary
+    - Decision node        → if/else block
+    - Database edge        → db.save() call
     """
     print("--- TRACE CODE GEN: GENERATING PROJECT SKELETON ---")
 
@@ -290,6 +305,7 @@ def code_gen_node(state: TraceState):
     edges    = state.get("edges", [])
     types    = {e["type"] for e in entities}
     labels   = [e["label"] for e in entities]
+    id_to_node = {e["id"]: e for e in entities}
 
     def safe_id(name: str) -> str:
         return re.sub(r"[^A-Za-z0-9_]", "_", name)
@@ -317,30 +333,23 @@ def code_gen_node(state: TraceState):
                 f");\n\n"
             )
 
-        # FOREIGN KEYs for DB → DB edges
-        fk_edges = [
-            ed for ed in edges
-            if any(e["label"] == ed["from"] and e["type"] == "Database" for e in entities)
-            and any(e["label"] == ed["to"]   and e["type"] == "Database" for e in entities)
-        ]
-        if fk_edges:
-            sql_lines.append("-- Relationships\n")
-            for ed in fk_edges:
-                src = safe_id(ed["from"])
-                tgt = safe_id(ed["to"])
+        # FOREIGN KEYs for DB → DB edges (Database edges in SQL)
+        for ed in edges:
+            src_node = id_to_node.get(ed["from"])
+            tgt_node = id_to_node.get(ed["to"])
+            if src_node and tgt_node and src_node["type"] == "Database" and tgt_node["type"] == "Database":
+                src = safe_id(src_node["label"])
+                tgt = safe_id(tgt_node["label"])
                 sql_lines.append(
                     f"ALTER TABLE {src}\n"
-                    f"    ADD COLUMN  {tgt}_id INT REFERENCES {tgt}(id)  -- {ed['action']}\n"
+                    f"    ADD COLUMN  {tgt}_id INT REFERENCES {tgt}(id)  -- Link: {ed['label']}\n"
                     f"    ON DELETE SET NULL;\n\n"
                 )
 
         code_sections.append("".join(sql_lines))
 
-    # ── FastAPI skeleton ──────────────────────────────────────────────────────
-    if "Actor" in types and "Process" in types:
-        actor_nodes   = [e for e in entities if e["type"] == "Actor"]
-        process_nodes = [e for e in entities if e["type"] == "Process"]
-
+    # ── FastAPI skeleton (Python Logic) ──────────────────────────────────────
+    if any(t in types for t in ["Actor", "Process", "Decision"]):
         py_lines: List[str] = [
             "# ============================================================\n",
             "# FastAPI Project Skeleton  (auto-generated by Trace)\n",
@@ -351,26 +360,70 @@ def code_gen_node(state: TraceState):
             "app = FastAPI(title=\"Trace Generated API\")\n\n",
         ]
 
-        # Build a lookup: which actor(s) connect to which process via edges
-        actor_for_proc: dict = {}
-        for ed in edges:
-            frm_actor = next((e for e in actor_nodes   if e["label"] == ed["from"]), None)
-            to_proc   = next((e for e in process_nodes if e["label"] == ed["to"]),   None)
-            if frm_actor and to_proc:
-                actor_for_proc[to_proc["label"]] = (frm_actor["label"], ed["action"])
+        process_nodes = [e for e in entities if e["type"] == "Process"]
+        actor_nodes   = [e for e in entities if e["type"] == "Actor"]
 
         for proc in process_nodes:
             cls       = safe_class(proc["label"])
             route     = "/" + safe_id(proc["label"]).lower()
-            actor_info = actor_for_proc.get(proc["label"])
+            
+            # Find incoming actor
+            actor_info = None
+            for ed in edges:
+                if ed["to"] == proc["id"]:
+                    src = id_to_node.get(ed["from"])
+                    if src and src["type"] == "Actor":
+                        actor_info = (src["label"], ed["label"])
+                        break
 
             if actor_info:
-                actor_label, action_verb = actor_info
-                actor_id_param = f"\n    {safe_id(actor_label).lower()}_id: int,  # from edge: {action_verb}"
-                actor_comment  = f"Triggered by '{actor_label}' via '{action_verb}'"
+                actor_label, action_label = actor_info
+                actor_id_param = f"\n    {safe_id(actor_label).lower()}_id: int,  # from edge: {action_label}"
+                actor_comment  = f"Triggered by '{actor_label}' via '{action_label}'"
             else:
                 actor_id_param = ""
                 actor_comment  = "No direct actor edge detected"
+
+            # Logic starting from this process
+            logic_body = []
+            
+            # Check for outgoing to Decision or Database
+            next_id, next_label = get_next_step(proc["id"], state)
+            if next_id:
+                next_node = id_to_node.get(next_id)
+                if next_node:
+                    if next_node["type"] == "Decision":
+                        # Decision logic
+                        yes_id, _ = next(( (ed["to"], ed["label"]) for ed in edges if ed["from"] == next_id and ed["label"].lower() == "yes"), (None, None))
+                        no_id, _ = next(( (ed["to"], ed["label"]) for ed in edges if ed["from"] == next_id and ed["label"].lower() == "no"), (None, None))
+                        
+                        yes_node = id_to_node.get(yes_id) if yes_id else None
+                        no_node = id_to_node.get(no_id) if no_id else None
+                        
+                        logic_body.append(f"    if True: # Logic for: {next_node['label']}")
+                        if yes_node:
+                            if yes_node["type"] == "Database":
+                                logic_body.append(f"        # Yes: Save to {yes_node['label']}\n        db.save({safe_id(yes_node['label'])})")
+                            else:
+                                logic_body.append(f"        # Yes: Proceed to {yes_node['label']}")
+                        else:
+                            logic_body.append("        pass")
+                            
+                        logic_body.append("    else:")
+                        if no_node:
+                            if no_node["type"] == "Database":
+                                logic_body.append(f"        # No: Save to {no_node['label']}\n        db.save({safe_id(no_node['label'])})")
+                            else:
+                                logic_body.append(f"        # No: Proceed to {no_node['label']}")
+                        else:
+                            logic_body.append("        pass")
+                    
+                    elif next_node["type"] == "Database":
+                        # Database edge logic
+                        logic_body.append(f"    # Save to {next_node['label']}\n    db.save({safe_id(next_node['label'])})")
+
+            if not logic_body:
+                logic_body.append("    # TODO: implement logic")
 
             py_lines.append(
                 f"class {cls}Request(BaseModel):\n"
@@ -384,7 +437,7 @@ def code_gen_node(state: TraceState):
                 f"    {actor_comment}\n"
                 f"    Process: {proc['label']}\n"
                 f"    \"\"\"\n"
-                f"    # TODO: implement\n"
+                + "\n".join(logic_body) + "\n"
                 f"    return {{\"status\": \"ok\"}}\n\n\n"
             )
 
@@ -394,9 +447,13 @@ def code_gen_node(state: TraceState):
     if not code_sections:
         code_sections.append(
             f"# Trace detected: {', '.join(labels)}\n"
-            f"# Edges: {[(ed['from'], ed['action'], ed['to']) for ed in edges]}\n"
-            f"# No code template matched — add Database or (Actor + Process) nodes.\n"
+            f"# Edges: {[(id_to_node.get(ed['from'], {'label': ed['from']})['label'], ed['label'], id_to_node.get(ed['to'], {'label': ed['to']})['label']) for ed in edges]}\n"
+            f"# No code template matched — add Database, Actor, or Process nodes.\n"
         )
+
+    generated_code = "\n".join(code_sections)
+    print(f"Generated code ({len(generated_code)} chars)")
+    return {"generated_code": generated_code}
 
     generated_code = "\n".join(code_sections)
     print(f"Generated code ({len(generated_code)} chars)")
