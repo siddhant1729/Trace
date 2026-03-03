@@ -2,6 +2,8 @@ import os
 import io
 import re
 import json
+import time
+import asyncio
 from typing import TypedDict, List
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
@@ -9,6 +11,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from langgraph.graph import StateGraph, END
 from PIL import Image
+
+# ── Tenacity for Backoff & Retry ──────────────────────────────────────────────
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_random_exponential,
+    retry_if_exception,
+)
 
 # Load environment variables
 load_dotenv()
@@ -146,44 +156,149 @@ def get_next_step(node_id, state):
     return None, None
 
 
+def resize_image(image_bytes: bytes, max_px: int = 1024) -> Image.Image:
+    """
+    Resize image so its longest side is at most `max_px` pixels.
+    Maintains aspect ratio. Returns a PIL Image object ready for Gemini.
+    """
+    img = Image.open(io.BytesIO(image_bytes))
+    w, h = img.size
+    if max(w, h) > max_px:
+        scale = max_px / max(w, h)
+        new_w, new_h = int(w * scale), int(h * scale)
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+        print(f"[Vision] Resized image from {w}x{h} → {new_w}x{new_h}")
+    else:
+        print(f"[Vision] Image {w}x{h} is within size limit, no resize needed")
+    return img
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    """Returns True if the exception is a quota/rate-limit error from Gemini."""
+    err = str(exc)
+    return any(x in err for x in ["RESOURCE_EXHAUSTED", "429", "quota"])
+
+
+def _gemini_generate_with_retry(model: str, contents, max_attempts: int = 3):
+    """
+    Calls client.models.generate_content with exponential backoff on quota errors.
+    Uses tenacity for robust retry logic.
+    """
+    @retry(
+        retry=retry_if_exception(_is_quota_error),
+        wait=wait_random_exponential(multiplier=1, min=4, max=30),
+        stop=stop_after_attempt(max_attempts),
+        reraise=True,
+    )
+    def _call():
+        return client.models.generate_content(model=model, contents=contents)
+
+    attempt = 0
+
+    @retry(
+        retry=retry_if_exception(_is_quota_error),
+        wait=wait_random_exponential(multiplier=1, min=4, max=30),
+        stop=stop_after_attempt(max_attempts),
+        reraise=True,
+        before_sleep=lambda rs: print(
+            f"[Retry] Quota error — attempt {rs.attempt_number + 1} of {max_attempts}. "
+            f"Waiting {rs.outcome_timestamp:.1f}s..."
+        ),
+    )
+    def _call_with_log():
+        return client.models.generate_content(model=model, contents=contents)
+
+    return _call_with_log()
+
+
+def _validate_edges(edges: List[dict], valid_ids: set) -> List[dict]:
+    """
+    Removes edges whose from/to does not reference a valid node ID,
+    and removes self-loops. Deduplicates (from, to, label) triples.
+    """
+    seen = set()
+    clean = []
+    for ed in edges:
+        f, t = ed["from"], ed["to"]
+        if f not in valid_ids or t not in valid_ids:
+            print(f"[EdgeValidation] Dropping edge {f}→{t}: unknown ID(s)")
+            continue
+        if f == t:
+            print(f"[EdgeValidation] Dropping self-loop edge {f}→{f}")
+            continue
+        key = (f, t, ed.get("label", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        clean.append(ed)
+    return clean
+
+
+def _reindex_nodes(nodes: List[dict]) -> List[dict]:
+    """
+    Ensures nodes have sequential IDs n1, n2, n3 … regardless of what the model
+    returned. Returns (reindexed_nodes, id_map) where id_map maps old→new ID.
+    """
+    reindexed = []
+    id_map = {}
+    for i, node in enumerate(nodes, start=1):
+        new_id = f"n{i}"
+        id_map[node["id"]] = new_id
+        reindexed.append({**node, "id": new_id})
+    return reindexed, id_map
+
+
 # ─────────────────────────────────────────
 # 3. Nodes
 # ─────────────────────────────────────────
 
 def vision_parser_node(state: TraceState):
     """
-    Single-pass Gemini Vision call (uses gemini-2.0-flash-lite for free-tier headroom).
-    Asks for a unified JSON object containing both 'nodes' and 'edges' arrays,
-    cutting API quota usage in half vs. the old two-pass approach.
+    Single-pass Gemini Vision call.
+    - Resizes image to ≤ 1024px before sending (bandwidth reduction).
+    - Asks for unified JSON with 'nodes' and 'edges'.
+    - Validates edge IDs reference real nodes.
+    - Re-indexes nodes to guarantee sequential n1, n2, n3 IDs.
+    - Retries on quota errors with exponential backoff.
     """
     print("--- TRACE VISION: ANALYZING DIAGRAM ---")
 
     unified_prompt = (
         "You are an expert flowchart parser. Analyze the diagram in the image.\n\n"
-        "Return ONLY a single valid JSON object following this schema. Do NOT include markdown fences or prose.\n"
+        "Return ONLY a single valid JSON object following this schema exactly. "
+        "Do NOT include markdown fences, prose, or any text outside the JSON.\n"
         "{\n"
         '  "nodes": [\n'
-        '    {"id": "n1", "label": "Text", "type": "Process|Decision|Actor|Database", "bbox": [ymin, xmin, ymax, xmax]}\n'
+        '    {"id": "n1", "label": "Start",      "type": "Process",  "bbox": [ymin, xmin, ymax, xmax]},\n'
+        '    {"id": "n2", "label": "In Stock?",   "type": "Decision", "bbox": [ymin, xmin, ymax, xmax]},\n'
+        '    {"id": "n3", "label": "Order Items", "type": "Process",  "bbox": [ymin, xmin, ymax, xmax]}\n'
         "  ],\n"
         '  "edges": [\n'
-        '    {"from": "node_id", "to": "node_id", "label": "Yes|No|Action"}\n'
+        '    {"from": "n1", "to": "n2", "label": "connects"},\n'
+        '    {"from": "n2", "to": "n3", "label": "No"}\n'
         "  ]\n"
         "}\n\n"
         "Rules:\n"
-        "- Identify EVERY process box, decision diamond, actor, and database.\n"
+        "- Assign IDs sequentially: n1, n2, n3, … in top-to-bottom, left-to-right order.\n"
+        "- Node types are EXACTLY one of: Process | Decision | Actor | Database\n"
         "- BBox values are 0-1000 integers [ymin, xmin, ymax, xmax].\n"
-        "- If an arrow has a 'Yes' or 'No' label, include it in the edge's 'label'.\n"
-        "- If it's a Decision node, ensure it has labeled outgoing edges."
+        "- Edges: 'from' and 'to' MUST be IDs that exist in the nodes array.\n"
+        "- Every arrow must have a label. Use 'Yes' or 'No' for decision branches, "
+        "  a verb/action for process arrows (e.g., 'validates', 'triggers'), or 'connects' if truly unlabeled.\n"
+        "- If a Decision node has 'Yes'/'No' branches, label those edges 'Yes' and 'No'.\n"
+        "- Do NOT create self-loops (from == to).\n"
+        "- Identify EVERY process box, decision diamond, actor/swimlane, and database cylinder."
     )
 
     fallback_node  = [{"id": "n1", "label": "Unknown Component", "type": "Process", "bbox": []}]
     fallback_edges: List[dict] = []
 
     try:
-        img = Image.open(io.BytesIO(state["image_bytes"]))
+        # ── Feature 4a: Resize image before sending ──────────────────────────
+        img = resize_image(state["image_bytes"], max_px=1024)
 
-        print(f"[Vision] Sending request to gemini-flash-latest (1.5)...")
-        resp     = client.models.generate_content(
+        print("[Vision] Sending request to gemini-flash-latest (1.5) with retry...")
+        resp     = _gemini_generate_with_retry(
             model="gemini-flash-latest",
             contents=[unified_prompt, img],
         )
@@ -195,15 +310,13 @@ def vision_parser_node(state: TraceState):
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError:
-            # Try to salvage by finding the outermost {...} block
             m = re.search(r"\{.*\}", cleaned, re.DOTALL)
             data = json.loads(m.group(0)) if m else {}
 
         raw_nodes = data.get("nodes", []) if isinstance(data, dict) else []
         if not raw_nodes and isinstance(data, list):
-            # Maybe the model returned a list of objects instead of a wrapped object
-             raw_nodes = [item for item in data if "label" in item and "id" in item]
-             raw_edges = [item for item in data if "from" in item and "to" in item]
+            raw_nodes = [item for item in data if "label" in item and "id" in item]
+            raw_edges = [item for item in data if "from" in item and "to" in item]
         else:
             raw_edges = data.get("edges", []) if isinstance(data, dict) else []
 
@@ -216,7 +329,7 @@ def vision_parser_node(state: TraceState):
             for e in raw_edges if isinstance(e, dict) and "from" in e and "to" in e
         ]
 
-        # If the top-level parse found nothing, fall back to the robust scanner
+        # Fallback scanner if top-level parse yielded nothing
         if not entities:
             print("Unified parse yielded 0 nodes — running fallback scanner...")
             entities = parse_entities_from_json(raw_text)
@@ -224,6 +337,25 @@ def vision_parser_node(state: TraceState):
             edges = parse_edges_from_json(raw_text)
         if not entities:
             entities = fallback_node
+
+        # ── Feature 1: Re-index to guarantee sequential IDs ──────────────────
+        entities, id_map = _reindex_nodes(entities)
+        print(f"[Vision] Node ID mapping: {id_map}")
+
+        # Remap edge IDs to new sequential IDs
+        remapped_edges = []
+        for ed in edges:
+            new_from = id_map.get(ed["from"])
+            new_to   = id_map.get(ed["to"])
+            if new_from and new_to:
+                remapped_edges.append({"from": new_from, "to": new_to, "label": ed["label"]})
+            else:
+                print(f"[Vision] Edge {ed['from']}→{ed['to']} dropped (unmappable ID)")
+        edges = remapped_edges
+
+        # ── Feature 2: Validate edges reference real node IDs ────────────────
+        valid_ids = {n["id"] for n in entities}
+        edges = _validate_edges(edges, valid_ids)
 
         print(f"Parsed {len(entities)} nodes, {len(edges)} edges")
         return {
@@ -235,8 +367,6 @@ def vision_parser_node(state: TraceState):
     except Exception as e:
         err_str = str(e)
         print(f"Gemini vision error: {err_str[:200]}")
-        # Re-raise quota/rate-limit errors so the API returns a proper HTTP error
-        # instead of silently showing 'Unknown Component' to the user.
         if any(x in err_str for x in ["RESOURCE_EXHAUSTED", "429", "404", "NOT_FOUND"]):
             raise
         return {
@@ -250,6 +380,7 @@ def rag_node(state: TraceState):
     """
     Answers the user query using detected entities, edges, and Gemini's raw analysis.
     Uses a second (text-only) Gemini pass to provide a human-readable explanation.
+    Retries on quota errors with exponential backoff.
     """
     query    = state["user_query"]
     entities = state["rectangles"]
@@ -260,10 +391,13 @@ def rag_node(state: TraceState):
     if not entities:
         return {"response": "No entities detected. Please upload a clearer diagram."}
 
-    # 1. Build a text representation of the graph for Gemini
+    # Build a text representation of the graph
     nodes_text = "\n".join([f"- {n['label']} ({n['type']})" for n in entities])
-    edges_text = "\n".join([f"- {id_to_label.get(e['from'], 'Unknown')} --[{e['label']}]--> {id_to_label.get(e['to'], 'Unknown')}" for e in edges])
-    
+    edges_text = "\n".join([
+        f"- {id_to_label.get(e['from'], e['from'])} --[{e['label']}]--> {id_to_label.get(e['to'], e['to'])}"
+        for e in edges
+    ])
+
     analysis_prompt = (
         f"The user has uploaded a diagram and asked: \"{query}\"\n\n"
         "Here is the parsed structure of the diagram:\n"
@@ -274,16 +408,17 @@ def rag_node(state: TraceState):
     )
 
     try:
-        # Use gemini-1.5-flash for the text analysis (usually has better quota for text-only)
-        resp = client.models.generate_content(
+        resp = _gemini_generate_with_retry(
             model="gemini-1.5-flash",
             contents=analysis_prompt,
         )
         response = resp.text
     except Exception as e:
         print(f"RAG Analysis error: {e}")
-        # Fallback to local summary if Gemini text pass fails
-        edge_summary = "\n".join([f"  {id_to_label.get(ed['from'], ed['from'])} --[{ed['label']}]--> {id_to_label.get(ed['to'], ed['to'])}" for ed in edges])
+        edge_summary = "\n".join([
+            f"  {id_to_label.get(ed['from'], ed['from'])} --[{ed['label']}]--> {id_to_label.get(ed['to'], ed['to'])}"
+            for ed in edges
+        ])
         response = f"I identified the following components: {', '.join(labels)}.\n\nDetected relationships:\n{edge_summary}"
 
     return {"response": response}
@@ -294,10 +429,10 @@ def code_gen_node(state: TraceState):
     Trace-to-Code:
     - Database nodes       → SQL CREATE TABLE DDL
     - DB → DB edge         → FOREIGN KEY constraint
+    - Process → DB edge    → INSERT INTO statement
     - Actor + Process      → FastAPI endpoint skeleton
     - Actor → Process edge → endpoint accepts actor_id path parameter
     - Decision node        → if/else block
-    - Database edge        → db.save() call
     """
     print("--- TRACE CODE GEN: GENERATING PROJECT SKELETON ---")
 
@@ -318,9 +453,11 @@ def code_gen_node(state: TraceState):
     # ── SQL DDL ──────────────────────────────────────────────────────────────
     db_nodes = [e for e in entities if e["type"] == "Database"]
     if db_nodes:
-        sql_lines: List[str] = ["-- ============================================================\n",
-                                "-- SQL DDL  (auto-generated by Trace)\n",
-                                "-- ============================================================\n\n"]
+        sql_lines: List[str] = [
+            "-- ============================================================\n",
+            "-- SQL DDL  (auto-generated by Trace)\n",
+            "-- ============================================================\n\n",
+        ]
 
         # CREATE TABLE for every DB node
         for node in db_nodes:
@@ -333,7 +470,7 @@ def code_gen_node(state: TraceState):
                 f");\n\n"
             )
 
-        # FOREIGN KEYs for DB → DB edges (Database edges in SQL)
+        # FOREIGN KEYs for DB → DB edges
         for ed in edges:
             src_node = id_to_node.get(ed["from"])
             tgt_node = id_to_node.get(ed["to"])
@@ -361,12 +498,11 @@ def code_gen_node(state: TraceState):
         ]
 
         process_nodes = [e for e in entities if e["type"] == "Process"]
-        actor_nodes   = [e for e in entities if e["type"] == "Actor"]
 
         for proc in process_nodes:
-            cls       = safe_class(proc["label"])
-            route     = "/" + safe_id(proc["label"]).lower()
-            
+            cls   = safe_class(proc["label"])
+            route = "/" + safe_id(proc["label"]).lower()
+
             # Find incoming actor
             actor_info = None
             for ed in edges:
@@ -384,43 +520,60 @@ def code_gen_node(state: TraceState):
                 actor_id_param = ""
                 actor_comment  = "No direct actor edge detected"
 
-            # Logic starting from this process
+            # Logic body: check outgoing edges from this process
             logic_body = []
-            
-            # Check for outgoing to Decision or Database
             next_id, next_label = get_next_step(proc["id"], state)
             if next_id:
                 next_node = id_to_node.get(next_id)
                 if next_node:
                     if next_node["type"] == "Decision":
-                        # Decision logic
-                        yes_id, _ = next(( (ed["to"], ed["label"]) for ed in edges if ed["from"] == next_id and ed["label"].lower() == "yes"), (None, None))
-                        no_id, _ = next(( (ed["to"], ed["label"]) for ed in edges if ed["from"] == next_id and ed["label"].lower() == "no"), (None, None))
-                        
+                        # Decision if/else block
+                        yes_id = next(
+                            (ed["to"] for ed in edges if ed["from"] == next_id and ed["label"].lower() == "yes"),
+                            None,
+                        )
+                        no_id  = next(
+                            (ed["to"] for ed in edges if ed["from"] == next_id and ed["label"].lower() == "no"),
+                            None,
+                        )
                         yes_node = id_to_node.get(yes_id) if yes_id else None
-                        no_node = id_to_node.get(no_id) if no_id else None
-                        
-                        logic_body.append(f"    if True: # Logic for: {next_node['label']}")
+                        no_node  = id_to_node.get(no_id)  if no_id  else None
+
+                        logic_body.append(f"    if True:  # Decision: {next_node['label']}")
                         if yes_node:
                             if yes_node["type"] == "Database":
-                                logic_body.append(f"        # Yes: Save to {yes_node['label']}\n        db.save({safe_id(yes_node['label'])})")
+                                tbl = safe_id(yes_node["label"])
+                                logic_body.append(
+                                    f"        # Yes → persist to {yes_node['label']}\n"
+                                    f"        db.execute(\"INSERT INTO {tbl} DEFAULT VALUES\")"
+                                )
                             else:
-                                logic_body.append(f"        # Yes: Proceed to {yes_node['label']}")
+                                logic_body.append(f"        # Yes → proceed to: {yes_node['label']}")
+                                logic_body.append("        pass")
                         else:
                             logic_body.append("        pass")
-                            
+
                         logic_body.append("    else:")
                         if no_node:
                             if no_node["type"] == "Database":
-                                logic_body.append(f"        # No: Save to {no_node['label']}\n        db.save({safe_id(no_node['label'])})")
+                                tbl = safe_id(no_node["label"])
+                                logic_body.append(
+                                    f"        # No → persist to {no_node['label']}\n"
+                                    f"        db.execute(\"INSERT INTO {tbl} DEFAULT VALUES\")"
+                                )
                             else:
-                                logic_body.append(f"        # No: Proceed to {no_node['label']}")
+                                logic_body.append(f"        # No → proceed to: {no_node['label']}")
+                                logic_body.append("        pass")
                         else:
                             logic_body.append("        pass")
-                    
+
                     elif next_node["type"] == "Database":
-                        # Database edge logic
-                        logic_body.append(f"    # Save to {next_node['label']}\n    db.save({safe_id(next_node['label'])})")
+                        # Feature 3: INSERT INTO for Process → Database edge
+                        tbl = safe_id(next_node["label"])
+                        logic_body.append(
+                            f"    # Persist to {next_node['label']}  (edge: '{next_label}')\n"
+                            f"    db.execute(\"INSERT INTO {tbl} DEFAULT VALUES\")  # TODO: supply column values"
+                        )
 
             if not logic_body:
                 logic_body.append("    # TODO: implement logic")
@@ -455,29 +608,54 @@ def code_gen_node(state: TraceState):
     print(f"Generated code ({len(generated_code)} chars)")
     return {"generated_code": generated_code}
 
-    generated_code = "\n".join(code_sections)
-    print(f"Generated code ({len(generated_code)} chars)")
-    return {"generated_code": generated_code}
+
+# ─────────────────────────────────────────
+# 4. Parallel Analysis Node (RAG + Code-Gen)
+# ─────────────────────────────────────────
+
+def analysis_node(state: TraceState) -> dict:
+    """
+    Feature 4b — Parallel Execution:
+    Runs rag_node and code_gen_node concurrently using asyncio.gather,
+    cutting wall-clock latency for the analysis phase roughly in half.
+    """
+    print("--- TRACE ANALYSIS: RUNNING RAG + CODE-GEN IN PARALLEL ---")
+    t_start = time.perf_counter()
+
+    async def _run_both():
+        loop = asyncio.get_event_loop()
+        rag_result, code_result = await asyncio.gather(
+            loop.run_in_executor(None, rag_node, state),
+            loop.run_in_executor(None, code_gen_node, state),
+        )
+        return rag_result, code_result
+
+    rag_result, code_result = asyncio.run(_run_both())
+
+    elapsed = time.perf_counter() - t_start
+    print(f"[Analysis] Both nodes finished in {elapsed:.2f}s (parallel)")
+    return {
+        "response":       rag_result.get("response", ""),
+        "generated_code": code_result.get("generated_code", ""),
+    }
 
 
 # ─────────────────────────────────────────
-# 4. Compile the Graph
+# 5. Compile the Graph
 # ─────────────────────────────────────────
 workflow = StateGraph(TraceState)
-workflow.add_node("vision_parser",  vision_parser_node)
-workflow.add_node("rag_engine",     rag_node)
-workflow.add_node("code_generator", code_gen_node)
+workflow.add_node("vision_parser", vision_parser_node)
+workflow.add_node("analysis",      analysis_node)        # replaces sequential rag → codegen
 
 workflow.set_entry_point("vision_parser")
-workflow.add_edge("vision_parser",  "rag_engine")
-workflow.add_edge("rag_engine",     "code_generator")
-workflow.add_edge("code_generator", END)
+workflow.add_edge("vision_parser", "analysis")
+workflow.add_edge("analysis",      END)
 
 trace_brain = workflow.compile()
 
 
 # ─────────────────────────────────────────
-# 5. FastAPI Setup
+# 6. FastAPI Setup
 # ─────────────────────────────────────────
 app = FastAPI(title="Trace AI Backend")
 app.add_middleware(
@@ -494,7 +672,7 @@ async def chat_with_trace(
     query: str = Form(...),
     file: UploadFile = File(...),
 ):
-    """Accepts image file and text query, runs Trace Vision → RAG → Code Gen."""
+    """Accepts image file and text query, runs Trace Vision → Analysis (RAG + Code-Gen in parallel)."""
     try:
         image_data = await file.read()
         initial_state: TraceState = {
