@@ -3,7 +3,7 @@ import io
 import re
 import json
 import time
-import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import TypedDict, List
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
@@ -409,17 +409,24 @@ def rag_node(state: TraceState):
 
     try:
         resp = _gemini_generate_with_retry(
-            model="gemini-1.5-flash",
+            model="gemini-flash-latest",
             contents=analysis_prompt,
         )
         response = resp.text
     except Exception as e:
         print(f"RAG Analysis error: {e}")
-        edge_summary = "\n".join([
-            f"  {id_to_label.get(ed['from'], ed['from'])} --[{ed['label']}]--> {id_to_label.get(ed['to'], ed['to'])}"
+        # Build a clean, readable fallback response
+        component_lines = "\n".join([f"  • {n['label']} ({n['type']})" for n in entities])
+        edge_lines = "\n".join([
+            f"  • {id_to_label.get(ed['from'], ed['from'])} → {id_to_label.get(ed['to'], ed['to'])}" +
+            (f"  ({ed['label']})" if ed.get('label') and ed['label'] != 'connects' else '')
             for ed in edges
         ])
-        response = f"I identified the following components: {', '.join(labels)}.\n\nDetected relationships:\n{edge_summary}"
+        response = (
+            f"**Diagram Components:**\n{component_lines}\n\n"
+            f"**Relationships:**\n{edge_lines}\n\n"
+            f"_(Gemini analysis unavailable — showing parsed structure)_"
+        )
 
     return {"response": response}
 
@@ -616,21 +623,18 @@ def code_gen_node(state: TraceState):
 def analysis_node(state: TraceState) -> dict:
     """
     Feature 4b — Parallel Execution:
-    Runs rag_node and code_gen_node concurrently using asyncio.gather,
-    cutting wall-clock latency for the analysis phase roughly in half.
+    Runs rag_node and code_gen_node concurrently in OS threads via
+    ThreadPoolExecutor — safe inside uvicorn's already-running event loop
+    (unlike asyncio.run() which raises RuntimeError in that context).
     """
     print("--- TRACE ANALYSIS: RUNNING RAG + CODE-GEN IN PARALLEL ---")
     t_start = time.perf_counter()
 
-    async def _run_both():
-        loop = asyncio.get_event_loop()
-        rag_result, code_result = await asyncio.gather(
-            loop.run_in_executor(None, rag_node, state),
-            loop.run_in_executor(None, code_gen_node, state),
-        )
-        return rag_result, code_result
-
-    rag_result, code_result = asyncio.run(_run_both())
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        future_rag  = pool.submit(rag_node,      state)
+        future_code = pool.submit(code_gen_node, state)
+        rag_result  = future_rag.result()
+        code_result = future_code.result()
 
     elapsed = time.perf_counter() - t_start
     print(f"[Analysis] Both nodes finished in {elapsed:.2f}s (parallel)")
@@ -685,10 +689,28 @@ async def chat_with_trace(
             "generated_code": "",
         }
         result = trace_brain.invoke(initial_state)
+
+        # Resolve edge IDs → human-readable labels for the frontend
+        id_to_label = {e["id"]: e["label"] for e in result["rectangles"]}
+        id_to_type  = {e["id"]: e["type"]  for e in result["rectangles"]}
+        resolved_edges = [
+            {
+                "from":       id_to_label.get(ed["from"], ed["from"]),
+                "to":         id_to_label.get(ed["to"],   ed["to"]),
+                "from_id":    ed["from"],
+                "to_id":      ed["to"],
+                "from_type":  id_to_type.get(ed["from"], "Process"),
+                "to_type":    id_to_type.get(ed["to"],   "Process"),
+                "label":      ed.get("label", "connects"),
+                "action":     ed.get("label", "connects"),
+            }
+            for ed in result.get("edges", [])
+        ]
+
         return {
             "reply":          result["response"],
             "entities":       result["rectangles"],
-            "edges":          result.get("edges", []),
+            "edges":          resolved_edges,
             "generated_code": result.get("generated_code", ""),
         }
     except Exception as e:

@@ -13,7 +13,10 @@ interface Entity {
 interface Edge {
   from: string;
   to: string;
-  action: string;
+  from_type?: string;
+  to_type?: string;
+  label?: string;
+  action?: string;
 }
 
 interface TraceResponse {
@@ -93,6 +96,25 @@ export default function TraceChat() {
       ? [result.edges[hoveredEdge].from, result.edges[hoveredEdge].to]
       : []
   );
+
+  // Simple markdown-like renderer for reply text
+  const renderReply = (text: string) => {
+    return text.split("\n").map((line, i) => {
+      // Bold: **text**
+      let rendered = line.replace(/\*\*(.+?)\*\*/g, '<strong class="text-emerald-300">$1</strong>');
+      // Italic: _text_ or *text*
+      rendered = rendered.replace(/(?:^|\s)_(.+?)_(?:\s|$)/g, ' <em class="text-slate-400 italic">$1</em> ');
+      // Bullet points: • or -
+      const isBullet = /^\s*[\u2022\-\*]\s/.test(line);
+
+      if (line.trim() === "") return <br key={i} />;
+      return (
+        <span key={i} className={`block ${isBullet ? "pl-2" : ""}`}>
+          <span dangerouslySetInnerHTML={{ __html: rendered }} />
+        </span>
+      );
+    });
+  };
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: "entities",     label: "Nodes",       count: result?.entities.length },
@@ -199,10 +221,10 @@ export default function TraceChat() {
                     <span className="text-green-500">●</span>
                     <span>trace output</span>
                   </div>
-                  <p className="text-green-400 leading-relaxed">
-                    <span className="text-slate-600 select-none">{">"} </span>
-                    {result.reply}
-                  </p>
+                  <div className="text-green-400 leading-relaxed">
+                    <span className="text-slate-600 select-none">{">"}&nbsp;</span>
+                    {renderReply(result.reply)}
+                  </div>
                   <span className="inline-block w-2 h-4 bg-green-400 opacity-70 animate-pulse" />
                 </div>
 
@@ -282,7 +304,7 @@ export default function TraceChat() {
                                   : "border-white/[0.05] bg-white/[0.02] hover:bg-white/[0.04]"}`}>
                               {/* From node */}
                               <span className={`px-2 py-1 rounded-lg border text-xs font-mono
-                                ${typeColors[result.entities.find(e => e.label === ed.from)?.type ?? ""] ?? defaultColor}`}>
+                                ${typeColors[ed.from_type ?? ""] ?? defaultColor}`}>
                                 {ed.from}
                               </span>
                               {/* Arrow + action */}
@@ -290,13 +312,13 @@ export default function TraceChat() {
                                 <span className="w-4 h-px bg-slate-600 inline-block" />
                                 <span className={`px-1.5 py-0.5 rounded text-[10px] transition-colors
                                   ${isHovered ? "bg-violet-500/20 text-violet-300" : "bg-white/[0.04] text-slate-500"}`}>
-                                  {ed.action}
+                                  {ed.label || ed.action || "connects"}
                                 </span>
-                                <span className="text-slate-500">➔</span>
+                                <span className="text-slate-500">➚</span>
                               </span>
                               {/* To node */}
                               <span className={`px-2 py-1 rounded-lg border text-xs font-mono
-                                ${typeColors[result.entities.find(e => e.label === ed.to)?.type ?? ""] ?? defaultColor}`}>
+                                ${typeColors[ed.to_type ?? ""] ?? defaultColor}`}>
                                 {ed.to}
                               </span>
                             </motion.div>
