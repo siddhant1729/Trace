@@ -32,25 +32,16 @@ interface TraceResponse {
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
-  /** Full trace result attached to assistant turns */
   traceResult?: TraceResponse;
 }
 
-const typeColors: Record<string, string> = {
-  Actor:     "bg-blue-500/20 text-blue-300 border-blue-500/30",
-  Process:   "bg-violet-500/20 text-violet-300 border-violet-500/30",
-  Database:  "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
-  Interface: "bg-amber-500/20 text-amber-300 border-amber-500/30",
-};
-const defaultColor = "bg-slate-500/20 text-slate-300 border-slate-500/30";
-
 type Tab = "entities" | "connections" | "code";
 
-// ── Markdown-ish renderer ───────────────────────────────────────────────────
+// ── Markdown-ish renderer ──────────────────────────────────────────────────
 function renderReply(text: string) {
   return text.split("\n").map((line, i) => {
-    let rendered = line.replace(/\*\*(.+?)\*\*/g, '<strong class="text-emerald-300">$1</strong>');
-    rendered = rendered.replace(/(?:^|\s)_(.+?)_(?:\s|$)/g, ' <em class="text-slate-400 italic">$1</em> ');
+    let rendered = line.replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--accent)">$1</strong>');
+    rendered = rendered.replace(/(?:^|\s)_(.+?)_(?:\s|$)/g, ' <em style="opacity:0.7">$1</em> ');
     const isBullet = /^\s*[\u2022\-\*]\s/.test(line);
     if (line.trim() === "") return <br key={i} />;
     return (
@@ -61,14 +52,13 @@ function renderReply(text: string) {
   });
 }
 
-// ── Trace-result tabs (entities / connections / code) ──────────────────────
+// ── Trace result tabs ──────────────────────────────────────────────────────
 function TraceResultPanel({ result }: { result: TraceResponse }) {
   const [activeTab, setActiveTab] = useState<Tab>("entities");
   const [hoveredEdge, setHoveredEdge] = useState<number | null>(null);
 
   useEffect(() => {
-    if (result.edges?.length > 0) setActiveTab("connections");
-    else setActiveTab("entities");
+    setActiveTab(result.edges?.length > 0 ? "connections" : "entities");
   }, [result]);
 
   const highlightedLabels: Set<string> = new Set(
@@ -79,26 +69,44 @@ function TraceResultPanel({ result }: { result: TraceResponse }) {
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: "entities",    label: "Nodes",       count: result.entities.length },
-    { id: "connections", label: "Connections",  count: result.edges?.length },
-    { id: "code",        label: "Code",         count: result.generated_code ? 1 : 0 },
+    { id: "connections", label: "Connections", count: result.edges?.length },
+    { id: "code",        label: "Code",        count: result.generated_code ? 1 : 0 },
   ];
 
   return (
-    <div className="mt-3 rounded-xl border border-white/[0.07] bg-black/30 overflow-hidden">
+    <div
+      className="mt-4 overflow-hidden"
+      style={{
+        borderRadius: "16px",
+        border: "1px solid var(--border)",
+        background: "var(--surface-raised)",
+        boxShadow: "var(--card-shadow)",
+      }}
+    >
       {/* Tab bar */}
-      <div className="flex gap-1 px-4 border-b border-white/[0.05]">
+      <div className="flex gap-1 px-4" style={{ borderBottom: "1px solid var(--border)" }}>
         {tabs.map((tab) => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-mono transition-colors border-b-2 -mb-px
-              ${activeTab === tab.id
-                ? "border-purple-500 text-purple-300"
-                : "border-transparent text-slate-600 hover:text-slate-400"}`}>
-            {tab.id === "entities"    && <ImageIcon  className="w-3 h-3" />}
-            {tab.id === "connections" && <GitBranch  className="w-3 h-3" />}
-            {tab.id === "code"        && <Code2      className="w-3 h-3" />}
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className="flex items-center gap-1.5 px-3 py-2.5 text-xs font-mono border-b-2 -mb-px"
+            style={{
+              borderBottomColor: activeTab === tab.id ? "var(--accent)" : "transparent",
+              color: activeTab === tab.id ? "var(--accent)" : "var(--text-subtle)",
+              transition: "color 0.2s, border-color 0.2s",
+              background: "none",
+              cursor: "pointer",
+            }}
+          >
+            {tab.id === "entities"    && <ImageIcon className="w-3 h-3" />}
+            {tab.id === "connections" && <GitBranch className="w-3 h-3" />}
+            {tab.id === "code"        && <Code2     className="w-3 h-3" />}
             {tab.label}
             {tab.count !== undefined && tab.count > 0 && (
-              <span className="px-1 py-0.5 rounded text-[10px] bg-white/[0.06] text-slate-500">
+              <span
+                className="px-1.5 py-0.5 rounded-full text-[10px]"
+                style={{ background: "var(--accent-light)", color: "var(--accent)" }}
+              >
                 {tab.count}
               </span>
             )}
@@ -106,27 +114,41 @@ function TraceResultPanel({ result }: { result: TraceResponse }) {
         ))}
       </div>
 
-      <div className="p-4 pt-3">
+      <div className="p-5 pt-4">
         {/* Nodes */}
         {activeTab === "entities" && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2 }}>
             {result.entities.length === 0 ? (
-              <p className="text-xs text-slate-600 font-mono">No nodes detected.</p>
+              <p className="text-xs font-mono" style={{ color: "var(--text-subtle)" }}>No nodes detected.</p>
             ) : (
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2.5">
                 {result.entities.map((e, i) => {
-                  const isHighlighted = highlightedLabels.size > 0 && highlightedLabels.has(e.label);
+                  const isHighlighted = highlightedLabels.has(e.label);
                   return (
                     <motion.span key={i}
-                      initial={{ opacity: 0, scale: 0.85 }} animate={{ opacity: 1, scale: 1 }}
+                      initial={{ opacity: 0, scale: 0.85 }}
+                      animate={{ opacity: 1, scale: 1 }}
                       transition={{ delay: i * 0.04 }}
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-mono cursor-default transition-all duration-150
-                        ${typeColors[e.type] ?? defaultColor}
-                        ${isHighlighted ? "ring-2 ring-white/30 scale-105 brightness-125" : ""}`}>
-                      <span className="px-1 py-0.5 rounded text-[10px] font-bold bg-black/30 opacity-80 tracking-wide uppercase">
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "0.375rem",
+                        padding: "4px 12px",
+                        borderRadius: "9999px",
+                        border: "1px solid var(--accent-mid)",
+                        background: isHighlighted ? "var(--accent-mid)" : "var(--accent-light)",
+                        color: "var(--accent)",
+                        fontSize: "0.75rem",
+                        fontFamily: "monospace",
+                        transform: isHighlighted ? "scale(1.05)" : "scale(1)",
+                        transition: "all 0.15s",
+                        cursor: "default",
+                      }}
+                    >
+                      <span style={{ fontSize: "0.625rem", fontWeight: 700, opacity: 0.7, textTransform: "uppercase", letterSpacing: "0.05em" }}>
                         {e.type}
                       </span>
-                      <span className="opacity-40">·</span>
+                      <span style={{ opacity: 0.4 }}>·</span>
                       <span>{e.label}</span>
                     </motion.span>
                   );
@@ -139,9 +161,9 @@ function TraceResultPanel({ result }: { result: TraceResponse }) {
         {/* Connections */}
         {activeTab === "connections" && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2 }}
-            className="space-y-2">
+            className="space-y-2.5">
             {(!result.edges || result.edges.length === 0) ? (
-              <p className="text-xs text-slate-600 font-mono">No directed edges detected.</p>
+              <p className="text-xs font-mono" style={{ color: "var(--text-subtle)" }}>No directed edges detected.</p>
             ) : (
               result.edges.map((ed, i) => {
                 const isHovered = hoveredEdge === i;
@@ -151,22 +173,45 @@ function TraceResultPanel({ result }: { result: TraceResponse }) {
                     transition={{ delay: i * 0.05 }}
                     onMouseEnter={() => setHoveredEdge(i)}
                     onMouseLeave={() => setHoveredEdge(null)}
-                    className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border font-mono text-xs transition-all duration-150 cursor-default
-                      ${isHovered
-                        ? "border-violet-500/40 bg-violet-500/10"
-                        : "border-white/[0.05] bg-white/[0.02] hover:bg-white/[0.04]"}`}>
-                    <span className={`px-2 py-1 rounded-lg border text-xs font-mono ${typeColors[ed.from_type ?? ""] ?? defaultColor}`}>
+                    className="flex items-center gap-2.5 font-mono text-xs cursor-default"
+                    style={{
+                      padding: "0.75rem 1rem",
+                      borderRadius: "12px",
+                      border: `1px solid ${isHovered ? "var(--accent-mid)" : "var(--border)"}`,
+                      background: isHovered ? "var(--accent-light)" : "var(--surface)",
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    <span style={{
+                      padding: "4px 12px",
+                      borderRadius: "9999px",
+                      border: "1px solid var(--accent-mid)",
+                      background: "var(--accent-light)",
+                      color: "var(--accent)",
+                    }}>
                       {ed.from}
                     </span>
-                    <span className="flex items-center gap-1 text-slate-500 shrink-0">
-                      <span className="w-4 h-px bg-slate-600 inline-block" />
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] transition-colors
-                        ${isHovered ? "bg-violet-500/20 text-violet-300" : "bg-white/[0.04] text-slate-500"}`}>
+                    <span style={{ display: "flex", alignItems: "center", gap: "0.375rem", color: "var(--text-subtle)" }}>
+                      <span style={{ width: "1rem", height: "1px", background: "var(--border)", display: "inline-block" }} />
+                      <span style={{
+                        padding: "2px 10px",
+                        borderRadius: "9999px",
+                        border: "1px solid var(--accent-mid)",
+                        background: isHovered ? "var(--accent-mid)" : "var(--accent-light)",
+                        color: "var(--accent)",
+                        fontSize: "0.625rem",
+                      }}>
                         {ed.label || ed.action || "connects"}
                       </span>
-                      <span className="text-slate-500">➚</span>
+                      <span style={{ color: "var(--text-subtle)" }}>➚</span>
                     </span>
-                    <span className={`px-2 py-1 rounded-lg border text-xs font-mono ${typeColors[ed.to_type ?? ""] ?? defaultColor}`}>
+                    <span style={{
+                      padding: "4px 12px",
+                      borderRadius: "9999px",
+                      border: "1px solid var(--accent-mid)",
+                      background: "var(--accent-light)",
+                      color: "var(--accent)",
+                    }}>
                       {ed.to}
                     </span>
                   </motion.div>
@@ -180,11 +225,20 @@ function TraceResultPanel({ result }: { result: TraceResponse }) {
         {activeTab === "code" && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2 }}>
             {result.generated_code ? (
-              <pre className="rounded-xl bg-[#0d0d14] border border-white/[0.06] p-4 text-xs text-violet-200 font-mono leading-relaxed overflow-x-auto whitespace-pre-wrap">
+              <pre
+                className="text-xs font-mono leading-relaxed overflow-x-auto whitespace-pre-wrap"
+                style={{
+                  padding: "1.25rem",
+                  borderRadius: "12px",
+                  background: "#0d0d14",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  color: "#c4b5fd",
+                }}
+              >
                 {result.generated_code}
               </pre>
             ) : (
-              <p className="text-xs text-slate-600 font-mono">No code generated.</p>
+              <p className="text-xs font-mono" style={{ color: "var(--text-subtle)" }}>No code generated.</p>
             )}
           </motion.div>
         )}
@@ -202,10 +256,9 @@ export default function TraceChat() {
   const [dragging, setDragging] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
-  const fileRef    = useRef<HTMLInputElement>(null);
-  const bottomRef  = useRef<HTMLDivElement>(null);
+  const fileRef   = useRef<HTMLInputElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to latest message
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
@@ -222,12 +275,7 @@ export default function TraceChat() {
     if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
   };
 
-  const resetSession = () => {
-    setMessages([]);
-    setFile(null);
-    setQuery("");
-    setError(null);
-  };
+  const resetSession = () => { setMessages([]); setFile(null); setQuery(""); setError(null); };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -235,8 +283,6 @@ export default function TraceChat() {
     if (!query.trim()) { setError("Please enter a question."); return; }
 
     const userMsg: ChatMessage = { role: "user", content: query.trim() };
-
-    // History = all previous turns (not including the new user message yet)
     const historyForBackend = messages.map((m) => ({ role: m.role, content: m.content }));
 
     setMessages((prev) => [...prev, userMsg]);
@@ -251,21 +297,11 @@ export default function TraceChat() {
       form.append("history", JSON.stringify(historyForBackend));
 
       const res = await fetch("http://localhost:8000/chat", { method: "POST", body: form });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail ?? "Backend error");
-      }
+      if (!res.ok) { const err = await res.json(); throw new Error(err.detail ?? "Backend error"); }
       const data: TraceResponse = await res.json();
-
-      const assistantMsg: ChatMessage = {
-        role: "assistant",
-        content: data.reply,
-        traceResult: data,
-      };
-      setMessages((prev) => [...prev, assistantMsg]);
+      setMessages((prev) => [...prev, { role: "assistant", content: data.reply, traceResult: data }]);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
-      // Remove the optimistically-added user message on failure
       setMessages((prev) => prev.slice(0, -1));
     } finally {
       setLoading(false);
@@ -280,98 +316,161 @@ export default function TraceChat() {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 16 }}
       transition={{ duration: 0.45, ease: "easeOut" }}
-      className="w-full mt-8"
+      style={{ width: "100%", marginTop: "2rem" }}
     >
-      <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-xl overflow-hidden shadow-2xl flex flex-col">
-
-        {/* Terminal header */}
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.06] bg-white/[0.02] shrink-0">
-          <Terminal className="w-4 h-4 text-purple-400" />
-          <span className="text-xs font-mono text-slate-400 tracking-wider">trace://chat</span>
+      <div
+        style={{
+          borderRadius: "20px",
+          border: "1px solid var(--border)",
+          background: "var(--surface)",
+          boxShadow: "var(--panel-shadow)",
+          backdropFilter: "blur(24px)",
+          WebkitBackdropFilter: "blur(24px)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem",
+            padding: "0.875rem 1.25rem",
+            borderBottom: "1px solid var(--border)",
+            background: "var(--surface-raised)",
+          }}
+        >
+          <Terminal className="w-4 h-4" style={{ color: "var(--accent)" }} />
+          <span className="text-xs font-mono tracking-wider" style={{ color: "var(--text-muted)" }}>
+            trace://chat
+          </span>
           {hasConversation && (
-            <span className="ml-2 text-[10px] font-mono text-slate-600">
+            <span className="ml-2 text-[10px] font-mono" style={{ color: "var(--text-subtle)" }}>
               {messages.length} message{messages.length !== 1 ? "s" : ""}
             </span>
           )}
-          <div className="ml-auto flex items-center gap-3">
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.75rem" }}>
             {hasConversation && (
               <button onClick={resetSession}
-                title="New session"
-                className="flex items-center gap-1 text-[10px] font-mono text-slate-600 hover:text-slate-400 transition-colors">
+                className="flex items-center gap-1 text-[10px] font-mono"
+                style={{ color: "var(--text-subtle)", cursor: "pointer", background: "none", border: "none" }}>
                 <RotateCcw className="w-3 h-3" />
                 New session
               </button>
             )}
             <div className="flex gap-1.5">
-              {["bg-red-500", "bg-yellow-500", "bg-green-500"].map((c, i) => (
-                <div key={i} className={`w-2.5 h-2.5 rounded-full ${c} opacity-60`} />
+              {["#ef4444", "#f59e0b", "#22c55e"].map((c, i) => (
+                <div key={i} className="w-2.5 h-2.5 rounded-full opacity-60" style={{ background: c }} />
               ))}
             </div>
           </div>
         </div>
 
-        {/* Chat history */}
+        {/* Chat messages */}
         {hasConversation && (
-          <div className="flex-1 overflow-y-auto max-h-[60vh] px-5 py-4 space-y-5">
+          <div className="flex-1 overflow-y-auto space-y-6" style={{ maxHeight: "60vh", padding: "1.5rem" }}>
             <AnimatePresence initial={false}>
               {messages.map((msg, idx) => (
                 <motion.div key={idx}
-                  initial={{ opacity: 0, y: 10 }}
+                  initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.25 }}
-                  className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-
+                  transition={{ duration: 0.3, ease: "easeOut" }}
+                  style={{
+                    display: "flex",
+                    gap: "0.75rem",
+                    justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
+                  }}
+                >
                   {msg.role === "assistant" && (
-                    <div className="w-7 h-7 rounded-full bg-purple-500/20 border border-purple-500/30 flex items-center justify-center shrink-0 mt-0.5">
-                      <Bot className="w-3.5 h-3.5 text-purple-400" />
+                    <div style={{
+                      width: "2rem", height: "2rem", borderRadius: "50%",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      background: "var(--accent-light)", border: "1px solid var(--accent-mid)",
+                      flexShrink: 0, marginTop: "0.125rem",
+                    }}>
+                      <Bot className="w-3.5 h-3.5" style={{ color: "var(--accent)" }} />
                     </div>
                   )}
 
-                  <div className={`max-w-[85%] ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col gap-1`}>
-                    <span className="text-[10px] font-mono text-slate-600">
+                  <div style={{ maxWidth: "85%", display: "flex", flexDirection: "column", gap: "0.25rem",
+                    alignItems: msg.role === "user" ? "flex-end" : "flex-start" }}>
+                    <span className="text-[10px] font-mono px-1" style={{ color: "var(--text-subtle)" }}>
                       {msg.role === "user" ? "you" : "trace ai"}
                     </span>
 
                     {msg.role === "user" ? (
-                      <div className="px-4 py-2.5 rounded-2xl rounded-tr-sm bg-indigo-600/30 border border-indigo-500/30 text-sm text-slate-200 font-mono">
+                      <div className="text-sm font-mono" style={{
+                        padding: "0.875rem 1.25rem",
+                        borderRadius: "16px",
+                        borderTopRightRadius: "4px",
+                        background: "var(--bubble-user)",
+                        border: "1px solid var(--bubble-user-border)",
+                        color: "var(--text)",
+                      }}>
                         {msg.content}
                       </div>
                     ) : (
-                      <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white/[0.04] border border-white/[0.07] text-sm text-green-400 font-mono leading-relaxed">
+                      <div className="text-sm font-mono leading-relaxed" style={{
+                        padding: "0.875rem 1.25rem",
+                        borderRadius: "16px",
+                        borderTopLeftRadius: "4px",
+                        background: "var(--bubble-ai)",
+                        border: "1px solid var(--bubble-ai-border)",
+                        color: "var(--text)",
+                      }}>
                         {renderReply(msg.content)}
                       </div>
                     )}
 
-                    {/* Trace result panel attached to assistant messages */}
                     {msg.role === "assistant" && msg.traceResult && (
-                      <div className="w-full">
+                      <div style={{ width: "100%" }}>
                         <TraceResultPanel result={msg.traceResult} />
                       </div>
                     )}
                   </div>
 
                   {msg.role === "user" && (
-                    <div className="w-7 h-7 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0 mt-0.5">
-                      <User className="w-3.5 h-3.5 text-indigo-400" />
+                    <div style={{
+                      width: "2rem", height: "2rem", borderRadius: "50%",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      background: "var(--accent-light)", border: "1px solid var(--accent-mid)",
+                      flexShrink: 0, marginTop: "0.125rem",
+                    }}>
+                      <User className="w-3.5 h-3.5" style={{ color: "var(--accent)" }} />
                     </div>
                   )}
                 </motion.div>
               ))}
             </AnimatePresence>
 
-            {/* Loading indicator */}
+            {/* Loading dots */}
             {loading && (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-3 justify-start">
-                <div className="w-7 h-7 rounded-full bg-purple-500/20 border border-purple-500/30 flex items-center justify-center shrink-0">
-                  <Bot className="w-3.5 h-3.5 text-purple-400" />
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-start" }}>
+                <div style={{
+                  width: "2rem", height: "2rem", borderRadius: "50%",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  background: "var(--accent-light)", border: "1px solid var(--accent-mid)",
+                  flexShrink: 0,
+                }}>
+                  <Bot className="w-3.5 h-3.5" style={{ color: "var(--accent)" }} />
                 </div>
-                <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white/[0.04] border border-white/[0.07]">
-                  <div className="flex gap-1.5 items-center">
+                <div style={{
+                  padding: "0.875rem 1.25rem",
+                  borderRadius: "16px",
+                  borderTopLeftRadius: "4px",
+                  background: "var(--bubble-ai)",
+                  border: "1px solid var(--bubble-ai-border)",
+                }}>
+                  <div style={{ display: "flex", gap: "0.375rem", alignItems: "center" }}>
                     {[0, 1, 2].map((i) => (
                       <motion.div key={i}
-                        className="w-1.5 h-1.5 rounded-full bg-purple-400"
+                        style={{ width: "0.375rem", height: "0.375rem", borderRadius: "50%", background: "var(--accent)" }}
                         animate={{ opacity: [0.3, 1, 0.3] }}
-                        transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }} />
+                        transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
+                      />
                     ))}
                   </div>
                 </div>
@@ -382,83 +481,132 @@ export default function TraceChat() {
         )}
 
         {/* Input form */}
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 shrink-0 border-t border-white/[0.05]">
-          {/* Drop Zone — shown collapsed once a conversation is going */}
+        <form
+          onSubmit={handleSubmit}
+          style={{ padding: "1.5rem", display: "flex", flexDirection: "column", gap: "1rem",
+            borderTop: hasConversation ? "1px solid var(--border)" : "none" }}
+        >
+          {/* Drop zone */}
           {!hasConversation ? (
             <div
               onClick={() => fileRef.current?.click()}
               onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
               onDrop={handleDrop}
-              className={`relative flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed cursor-pointer transition-all duration-200
-                ${dragging
-                  ? "border-purple-500/70 bg-purple-500/10"
+              style={{
+                display: "flex", flexDirection: "column", alignItems: "center",
+                justifyContent: "center", gap: "0.75rem",
+                height: "11rem",
+                borderRadius: "16px",
+                cursor: "pointer",
+                border: dragging
+                  ? "2px dashed var(--accent)"
                   : file
-                    ? "border-violet-500/50 bg-violet-500/05"
-                    : "border-white/10 hover:border-white/20 bg-white/[0.02] hover:bg-white/[0.04]"
-                }`}
-              style={{ height: "10rem" }}
+                  ? "2px dashed var(--accent-mid)"
+                  : "2px dashed var(--border)",
+                background: dragging ? "var(--accent-light)" : file ? "var(--accent-light)" : "var(--surface-raised)",
+                transition: "all 0.2s",
+              }}
             >
-              <input ref={fileRef} type="file" accept="image/*" className="hidden"
+              <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }}
                 onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }} />
               {file ? (
                 <>
-                  <ImageIcon className="w-6 h-6 text-violet-400" />
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-violet-300 font-mono truncate max-w-[240px]">{file.name}</span>
+                  <ImageIcon className="w-6 h-6" style={{ color: "var(--accent)" }} />
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <span className="text-sm font-mono" style={{ color: "var(--accent)", maxWidth: "240px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
                     <button type="button" onClick={(e) => { e.stopPropagation(); setFile(null); }}
-                      className="text-slate-500 hover:text-red-400 transition-colors">
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-subtle)" }}>
                       <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
-                  <span className="text-xs text-slate-600">{(file.size / 1024).toFixed(1)} KB</span>
+                  <span className="text-xs" style={{ color: "var(--text-subtle)" }}>{(file.size / 1024).toFixed(1)} KB</span>
                 </>
               ) : (
                 <>
-                  <Upload className="w-5 h-5 text-slate-500" />
-                  <span className="text-sm text-slate-500">Drop your diagram here or <span className="text-purple-400">browse</span></span>
-                  <span className="text-xs text-slate-700">PNG, JPG, WebP accepted</span>
+                  <Upload className="w-5 h-5" style={{ color: "var(--text-subtle)" }} />
+                  <span className="text-sm" style={{ color: "var(--text-muted)" }}>
+                    Drop your diagram here or <span style={{ color: "var(--accent)" }}>browse</span>
+                  </span>
+                  <span className="text-xs" style={{ color: "var(--text-subtle)" }}>PNG, JPG, WebP accepted</span>
                 </>
               )}
             </div>
           ) : (
-            /* Compact file badge once conversation started */
-            <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-              <div className="flex items-center gap-2">
-                <ImageIcon className="w-3.5 h-3.5 text-violet-400" />
-                <span className="text-xs font-mono text-slate-500 truncate max-w-[200px]">{file?.name}</span>
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "0.625rem 1rem",
+              borderRadius: "12px",
+              border: "1px solid var(--border)",
+              background: "var(--surface-raised)",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <ImageIcon className="w-3.5 h-3.5" style={{ color: "var(--accent)" }} />
+                <span className="text-xs font-mono" style={{ color: "var(--text-muted)", maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {file?.name}
+                </span>
               </div>
-              <button type="button"
-                onClick={() => fileRef.current?.click()}
-                className="text-[10px] font-mono text-slate-600 hover:text-slate-400 transition-colors">
+              <button type="button" onClick={() => fileRef.current?.click()}
+                className="text-[10px] font-mono"
+                style={{ color: "var(--text-subtle)", cursor: "pointer", background: "none", border: "none" }}>
                 change
               </button>
-              <input ref={fileRef} type="file" accept="image/*" className="hidden"
+              <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }}
                 onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }} />
             </div>
           )}
 
-          {/* Query */}
-          <div className="flex gap-3">
-            <input type="text" value={query} onChange={(e) => setQuery(e.target.value)}
+          {/* Query + send */}
+          <div style={{ display: "flex", gap: "0.75rem" }}>
+            <input
+              type="text" value={query} onChange={(e) => setQuery(e.target.value)}
               placeholder={hasConversation ? "Ask a follow-up question…" : "Ask about your diagram…"}
-              className="flex-1 h-11 px-4 rounded-xl bg-white/[0.04] border border-white/[0.08] text-slate-200 text-sm placeholder:text-slate-600 focus:outline-none focus:border-purple-500/50 focus:bg-white/[0.06] transition-all duration-200 font-mono" />
+              className="flex-1 text-sm font-mono"
+              style={{
+                height: "2.875rem",
+                padding: "0 1rem",
+                borderRadius: "12px",
+                border: "1px solid var(--border)",
+                background: "var(--surface-raised)",
+                color: "var(--text)",
+                outline: "none",
+              }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border)"; }}
+            />
             <motion.button type="submit" disabled={loading}
               whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-              className="rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-sm font-semibold inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity shrink-0"
-              style={{ height: "2.75rem", padding: "0 1.25rem", minWidth: "max-content" }}>
+              style={{
+                height: "2.875rem",
+                padding: "0 1.5rem",
+                borderRadius: "12px",
+                background: "var(--accent)",
+                color: "#fff",
+                border: "none",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                fontWeight: 600,
+                fontSize: "0.875rem",
+                flexShrink: 0,
+                boxShadow: "0 4px 14px rgba(124,58,237,0.3)",
+                opacity: loading ? 0.6 : 1,
+              }}>
               {loading
                 ? <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                    className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full" />
-                : <Send className="w-4 h-4 shrink-0" />}
-              <span className="whitespace-nowrap">{loading ? "Tracing…" : "Send"}</span>
+                    style={{ width: "1rem", height: "1rem", borderRadius: "50%", border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff" }} />
+                : <Send className="w-4 h-4" />}
+              <span style={{ whiteSpace: "nowrap" }}>{loading ? "Tracing…" : "Send"}</span>
             </motion.button>
           </div>
 
           <AnimatePresence>
             {error && (
               <motion.p initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                className="text-xs text-red-400 font-mono px-1">✗ {error}</motion.p>
+                className="text-xs font-mono px-1" style={{ color: "#ef4444" }}>
+                ✗ {error}
+              </motion.p>
             )}
           </AnimatePresence>
         </form>

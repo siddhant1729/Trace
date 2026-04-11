@@ -17,7 +17,8 @@ const geist = Geist({
 
 export const metadata: Metadata = {
   title: "Trace – Turn Diagrams into Reality",
-  description: "Trace transforms your diagrams and sketches into working code and real implementations instantly. The AI-powered diagramming tool for builders.",
+  description:
+    "Trace transforms your diagrams and sketches into working code and real implementations instantly. The AI-powered diagramming tool for builders.",
   keywords: ["AI", "diagrams", "code generation", "developer tools", "Trace"],
   openGraph: {
     title: "Trace – Turn Diagrams into Reality",
@@ -32,11 +33,28 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`dark ${inter.variable} ${geist.variable}`}>
+    <html lang="en" className={`${inter.variable} ${geist.variable}`} suppressHydrationWarning>
+      <head>
+        {/* Inline script: read localStorage BEFORE first paint to avoid theme flash */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var stored = localStorage.getItem('trace-theme');
+                  if (stored === 'dark') {
+                    document.documentElement.classList.add('dark');
+                  }
+                  // default = light (no class needed)
+                } catch(e) {}
+              })();
+            `,
+          }}
+        />
+      </head>
       <body className={`antialiased noise-overlay ${inter.className}`}>
         {children}
       </body>
     </html>
   );
 }
-

@@ -8,49 +8,37 @@ const features = [
     icon: Zap,
     title: "Instant Code Generation",
     description: "Flowchart to production-ready code in under 3 seconds.",
-    color: "from-yellow-500/20 to-orange-500/10",
-    iconColor: "text-yellow-400",
-    borderColor: "hover:border-yellow-500/30",
+    accentClass: "text-yellow-500",
   },
   {
     icon: GitBranch,
     title: "Smart Architecture",
     description: "Generates code that matches your project's existing patterns.",
-    color: "from-indigo-500/20 to-blue-500/10",
-    iconColor: "text-indigo-400",
-    borderColor: "hover:border-indigo-500/30",
+    accentClass: "text-indigo-500",
   },
   {
     icon: Layers,
     title: "Any Diagram Format",
     description: "Mermaid, draw.io, Figma exports, or hand-drawn sketches.",
-    color: "from-purple-500/20 to-violet-500/10",
-    iconColor: "text-purple-400",
-    borderColor: "hover:border-purple-500/30",
+    accentClass: "text-purple-500",
   },
   {
     icon: Code2,
     title: "Multi-Language Output",
     description: "Python, TypeScript, Go, Rust — idiomatic code, your language.",
-    color: "from-emerald-500/20 to-teal-500/10",
-    iconColor: "text-emerald-400",
-    borderColor: "hover:border-emerald-500/30",
+    accentClass: "text-emerald-500",
   },
   {
     icon: Cpu,
     title: "AI-Powered Reasoning",
     description: "A frontier model that truly understands system design.",
-    color: "from-rose-500/20 to-pink-500/10",
-    iconColor: "text-rose-400",
-    borderColor: "hover:border-rose-500/30",
+    accentClass: "text-rose-500",
   },
   {
     icon: Globe,
     title: "Deploy Anywhere",
     description: "Ready for Vercel, AWS, GCP, or any custom infrastructure.",
-    color: "from-cyan-500/20 to-sky-500/10",
-    iconColor: "text-cyan-400",
-    borderColor: "hover:border-cyan-500/30",
+    accentClass: "text-cyan-500",
   },
 ];
 
@@ -69,7 +57,7 @@ const cardVariants = {
 
 export default function FeatureCards() {
   return (
-    <section style={{ padding: "6rem 1.5rem" }}>
+    <section style={{ padding: "8rem 1.5rem", background: "var(--bg-section)" }}>
       <div style={{ maxWidth: "80rem", marginLeft: "auto", marginRight: "auto" }}>
         {/* Section header */}
         <motion.div
@@ -77,31 +65,30 @@ export default function FeatureCards() {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.6 }}
-          style={{ textAlign: "center", marginBottom: "4rem" }}
+          style={{ textAlign: "center", marginBottom: "6rem" }}
         >
-          <p
-            className="text-sm font-semibold uppercase tracking-widest text-purple-400 mb-4"
-            style={{ textAlign: "center" }}
-          >
+          <p style={{ fontSize: "0.75rem", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--accent)", marginBottom: "1.25rem" }}>
             Everything you need
           </p>
-          <h2
-            className="text-3xl sm:text-4xl md:text-5xl font-bold text-slate-100 leading-tight"
-            style={{ textAlign: "center" }}
-          >
+          <h2 style={{ fontSize: "clamp(2rem, 5vw, 3rem)", fontWeight: 700, color: "var(--text)", lineHeight: 1.2, textAlign: "center" }}>
             Built for the way{" "}
             <span className="text-gradient">developers think</span>
           </h2>
-          <p
-            className="mt-4 text-slate-400 text-lg"
-            style={{ maxWidth: "36rem", margin: "1rem auto 0", textAlign: "center" }}
-          >
+          <p style={{
+            maxWidth: "38rem",
+            margin: "1.5rem auto 0",
+            textAlign: "center",
+            fontSize: "1.1rem",
+            lineHeight: 1.8,
+            opacity: 0.6,
+            color: "var(--text)",
+          }}>
             Trace bridges the gap between your mental model and working software.
           </p>
         </motion.div>
 
-        {/* Grid — 2 columns on desktop gives each card real breathing room */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+        {/* Card grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
           {features.map((feature, i) => {
             const Icon = feature.icon;
             return (
@@ -113,25 +100,49 @@ export default function FeatureCards() {
                 whileInView="visible"
                 viewport={{ once: true }}
                 whileHover={{ y: -4, transition: { duration: 0.2 } }}
-                className={`relative group p-8 rounded-2xl border border-slate-800/80 bg-slate-900/40 backdrop-blur-sm transition-all duration-300 ${feature.borderColor} cursor-default`}
+                style={{
+                  position: "relative",
+                  padding: "2.5rem",
+                  borderRadius: "20px",
+                  border: "1px solid var(--border)",
+                  background: "var(--surface)",
+                  boxShadow: "var(--card-shadow)",
+                  backdropFilter: "blur(12px)",
+                  WebkitBackdropFilter: "blur(12px)",
+                  cursor: "default",
+                  transition: "box-shadow 0.3s, border-color 0.3s",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLDivElement).style.borderColor = "var(--accent-mid)";
+                  (e.currentTarget as HTMLDivElement).style.boxShadow = "0 8px 32px rgba(124,58,237,0.12)";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLDivElement).style.borderColor = "var(--border)";
+                  (e.currentTarget as HTMLDivElement).style.boxShadow = "var(--card-shadow)";
+                }}
               >
-                {/* Inner gradient bg */}
-                <div
-                  className={`absolute inset-0 rounded-2xl bg-gradient-to-br ${feature.color} opacity-0 group-hover:opacity-100 transition-opacity duration-300`}
-                />
-
-                <div className="relative z-10 flex items-start gap-6">
+                <div style={{ display: "flex", alignItems: "flex-start", gap: "1.5rem" }}>
                   {/* Icon */}
-                  <div className="shrink-0 inline-flex items-center justify-center w-12 h-12 rounded-xl bg-slate-800/80 border border-slate-700/50 group-hover:border-slate-600/50 transition-colors duration-200">
-                    <Icon className={`w-5 h-5 ${feature.iconColor}`} />
+                  <div style={{
+                    flexShrink: 0,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "2.75rem",
+                    height: "2.75rem",
+                    borderRadius: "12px",
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-raised)",
+                  }}>
+                    <Icon className={`w-5 h-5 ${feature.accentClass}`} />
                   </div>
 
-                  {/* Text content moved to the right of the icon */}
-                  <div className="flex-1">
-                    <h3 className="text-slate-100 font-semibold text-lg mb-2">
+                  {/* Text */}
+                  <div>
+                    <h3 style={{ fontWeight: 600, fontSize: "1.05rem", marginBottom: "0.625rem", color: "var(--text)" }}>
                       {feature.title}
                     </h3>
-                    <p className="text-slate-400 leading-7" style={{ fontSize: "0.9rem" }}>
+                    <p style={{ fontSize: "0.9rem", lineHeight: 1.7, opacity: 0.65, color: "var(--text)" }}>
                       {feature.description}
                     </p>
                   </div>
@@ -147,20 +158,42 @@ export default function FeatureCards() {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.6, delay: 0.3 }}
-          className="grid grid-cols-3 gap-px bg-slate-800/50 rounded-2xl overflow-hidden border border-slate-800/50"
-          style={{ marginTop: "5rem", maxWidth: "48rem", marginLeft: "auto", marginRight: "auto" }}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(3, 1fr)",
+            gap: "1px",
+            marginTop: "6rem",
+            maxWidth: "52rem",
+            marginLeft: "auto",
+            marginRight: "auto",
+            borderRadius: "20px",
+            overflow: "hidden",
+            border: "1px solid var(--border)",
+            background: "var(--border)",
+          }}
         >
           {[
-            { value: "< 3s", label: "Avg. generation time" },
-            { value: "12+", label: "Languages supported" },
+            { value: "< 3s",  label: "Avg. generation time" },
+            { value: "12+",   label: "Languages supported" },
             { value: "99.9%", label: "Uptime SLA" },
           ].map((stat) => (
             <div
               key={stat.label}
-              className="flex flex-col items-center justify-center py-8 px-4 bg-slate-900/60 hover:bg-slate-800/50 transition-colors duration-200"
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "2.5rem 1rem",
+                background: "var(--surface)",
+              }}
             >
-              <span className="text-3xl font-black text-gradient">{stat.value}</span>
-              <span className="text-slate-500 text-sm mt-1 text-center">{stat.label}</span>
+              <span className="text-gradient" style={{ fontSize: "2rem", fontWeight: 900 }}>
+                {stat.value}
+              </span>
+              <span style={{ fontSize: "0.8rem", marginTop: "0.5rem", textAlign: "center", color: "var(--text-muted)", opacity: 0.7 }}>
+                {stat.label}
+              </span>
             </div>
           ))}
         </motion.div>

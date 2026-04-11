@@ -5,8 +5,7 @@ import { motion } from "framer-motion";
 export default function MeshBackground() {
     return (
         <div className="fixed inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
-            {/* Pure black base */}
-            <div className="absolute inset-0 bg-black" />
+            {/* Base is transparent — background color comes from var(--bg) on <main> */}
 
             {/* Orb 1 – very faint purple, top left */}
             <motion.div
