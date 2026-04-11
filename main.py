@@ -42,6 +42,7 @@ class TraceState(TypedDict):
     gemini_raw:     str          # Raw Gemini text
     response:       str
     generated_code: str          # Trace-to-Code output
+    chat_history:   List[dict]   # [{"role": "user"|"assistant", "content": str}]
 
 
 # ─────────────────────────────────────────
@@ -379,14 +380,14 @@ def vision_parser_node(state: TraceState):
 def rag_node(state: TraceState):
     """
     Answers the user query using detected entities, edges, and Gemini's raw analysis.
-    Uses a second (text-only) Gemini pass to provide a human-readable explanation.
+    Incorporates conversation history for multi-turn context.
     Retries on quota errors with exponential backoff.
     """
-    query    = state["user_query"]
-    entities = state["rectangles"]
-    edges    = state.get("edges", [])
+    query       = state["user_query"]
+    entities    = state["rectangles"]
+    edges       = state.get("edges", [])
+    history     = state.get("chat_history", [])
     id_to_label = {e["id"]: e["label"] for e in entities}
-    labels      = [e["label"] for e in entities]
 
     if not entities:
         return {"response": "No entities detected. Please upload a clearer diagram."}
@@ -398,13 +399,28 @@ def rag_node(state: TraceState):
         for e in edges
     ])
 
+    # Build conversation history block
+    history_block = ""
+    if history:
+        history_lines = []
+        for msg in history:
+            role = "User" if msg["role"] == "user" else "Assistant"
+            history_lines.append(f"{role}: {msg['content']}")
+        history_block = (
+            "\n\nConversation history (for context):\n"
+            + "\n".join(history_lines)
+            + "\n"
+        )
+
     analysis_prompt = (
-        f"The user has uploaded a diagram and asked: \"{query}\"\n\n"
-        "Here is the parsed structure of the diagram:\n"
+        "You are an expert at analyzing system diagrams. "
+        "The user has uploaded a diagram. Here is its parsed structure:\n"
         f"Nodes:\n{nodes_text}\n\n"
-        f"Relationships (Edges):\n{edges_text}\n\n"
-        "Please provide a concise, professional explanation of the diagram and answer the user's specific query. "
-        "Focus on the flow and logic. Do NOT mention IDs like 'n1'. Use the labels provided."
+        f"Relationships (Edges):\n{edges_text}\n"
+        f"{history_block}\n"
+        f"User's current question: \"{query}\"\n\n"
+        "Provide a concise, professional answer. Use prior conversation context if relevant. "
+        "Do NOT mention node IDs like 'n1'. Use the labels provided."
     )
 
     try:
@@ -415,7 +431,6 @@ def rag_node(state: TraceState):
         response = resp.text
     except Exception as e:
         print(f"RAG Analysis error: {e}")
-        # Build a clean, readable fallback response
         component_lines = "\n".join([f"  • {n['label']} ({n['type']})" for n in entities])
         edge_lines = "\n".join([
             f"  • {id_to_label.get(ed['from'], ed['from'])} → {id_to_label.get(ed['to'], ed['to'])}" +
@@ -675,10 +690,18 @@ app.add_middleware(
 async def chat_with_trace(
     query: str = Form(...),
     file: UploadFile = File(...),
+    history: str = Form(default="[]"),
 ):
-    """Accepts image file and text query, runs Trace Vision → Analysis (RAG + Code-Gen in parallel)."""
+    """Accepts image file, text query, and optional JSON chat history. Runs Trace Vision → Analysis (RAG + Code-Gen in parallel)."""
     try:
         image_data = await file.read()
+
+        # Parse history sent from the frontend
+        try:
+            parsed_history: List[dict] = json.loads(history)
+        except (json.JSONDecodeError, TypeError):
+            parsed_history = []
+
         initial_state: TraceState = {
             "user_query":     query,
             "image_bytes":    image_data,
@@ -687,6 +710,7 @@ async def chat_with_trace(
             "gemini_raw":     "",
             "response":       "",
             "generated_code": "",
+            "chat_history":   parsed_history,
         }
         result = trace_brain.invoke(initial_state)
 
