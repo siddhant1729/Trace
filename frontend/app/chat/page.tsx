@@ -32,41 +32,90 @@ interface Session {
 }
 
 // ── Markdown renderer — Notion-style ─────────────────────────────────────
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function renderReply(text: string) {
-  const lines = text.split("\n");
   const elements: React.ReactNode[] = [];
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    const trimmed = line.trim();
+  // Split on fenced code blocks (```lang\n...\n```)
+  const parts = text.split(/(```[\w]*\n[\s\S]*?```)/g);
 
-    // Empty line → spacer
-    if (trimmed === "") {
-      elements.push(<div key={i} style={{ height: "0.5rem" }} />);
-      i++;
-      continue;
-    }
-
-    // Bullet line: starts with * or - followed by space
-    if (/^[\*\-]\s/.test(trimmed)) {
-      const bulletContent = trimmed.slice(2);
+  parts.forEach((part, idx) => {
+    const fenceMatch = part.match(/^```([\w]*)\n([\s\S]*?)```$/);
+    if (fenceMatch) {
+      const lang = fenceMatch[1] || "code";
+      const code = fenceMatch[2];
       elements.push(
-        <div key={i} style={{ display: "flex", alignItems: "baseline", gap: "0.625rem", marginBottom: "0.25rem" }}>
-          <span style={{ color: "var(--accent)", fontSize: "0.6rem", flexShrink: 0, marginTop: "0.3rem" }}>●</span>
-          <span style={{ flex: 1 }} dangerouslySetInnerHTML={{ __html: inlineMarkdown(bulletContent) }} />
+        <div key={idx} style={{ position: "relative", margin: "0.75rem 0" }}>
+          {/* Language label */}
+          <div style={{
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+            padding: "4px 12px",
+            background: "var(--surface-raised)",
+            borderRadius: "8px 8px 0 0",
+            border: "1px solid var(--border)",
+            borderBottom: "none",
+            fontSize: "0.7rem", fontWeight: 600,
+            color: "var(--text-muted)",
+            fontFamily: "monospace",
+          }}>
+            <span>{lang}</span>
+            <button
+              onClick={() => navigator.clipboard.writeText(code)}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                color: "var(--accent)", fontSize: "0.7rem", fontWeight: 600,
+                padding: "2px 6px", borderRadius: "4px",
+              }}
+            >Copy</button>
+          </div>
+          {/* Code block */}
+          <pre style={{
+            margin: 0,
+            padding: "1rem",
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "0 0 8px 8px",
+            overflowX: "auto",
+            fontSize: "0.82rem",
+            lineHeight: 1.65,
+            fontFamily: "'Fira Code', 'Cascadia Code', 'Consolas', monospace",
+          }}>
+            <code dangerouslySetInnerHTML={{ __html: escapeHtml(code) }} />
+          </pre>
         </div>
       );
-      i++;
-      continue;
+      return;
     }
 
-    // Regular paragraph
-    elements.push(
-      <p key={i} style={{ marginBottom: "0.25rem" }}
-        dangerouslySetInnerHTML={{ __html: inlineMarkdown(trimmed) }} />
-    );
-    i++;
-  }
+    // Non-code section — process line-by-line
+    const lines = part.split("\n");
+    lines.forEach((line, lineIdx) => {
+      const trimmed = line.trim();
+      if (trimmed === "") {
+        elements.push(<div key={`${idx}-${lineIdx}`} style={{ height: "0.5rem" }} />);
+      } else if (/^[\*\-]\s/.test(trimmed)) {
+        const bulletContent = trimmed.slice(2);
+        elements.push(
+          <div key={`${idx}-${lineIdx}`} style={{ display: "flex", alignItems: "baseline", gap: "0.625rem", marginBottom: "0.25rem" }}>
+            <span style={{ color: "var(--accent)", fontSize: "0.6rem", flexShrink: 0, marginTop: "0.3rem" }}>●</span>
+            <span style={{ flex: 1 }} dangerouslySetInnerHTML={{ __html: inlineMarkdown(bulletContent) }} />
+          </div>
+        );
+      } else {
+        elements.push(
+          <p key={`${idx}-${lineIdx}`} style={{ marginBottom: "0.25rem" }}
+            dangerouslySetInnerHTML={{ __html: inlineMarkdown(trimmed) }} />
+        );
+      }
+    });
+  });
+
   return elements;
 }
 
@@ -79,6 +128,7 @@ function inlineMarkdown(text: string): string {
   out = out.replace(/(?:^|\s)_(.+?)_(?:\s|$)/g, ' <em style="opacity:0.75">$1</em> ');
   return out;
 }
+
 
 // ── Collapsible Diagram Stats ──────────────────────────────────────────────
 type Tab = "entities" | "connections" | "code";
