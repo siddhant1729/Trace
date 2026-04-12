@@ -306,7 +306,7 @@ export default function ChatPage() {
       form.append("file", active.file);
       form.append("history", JSON.stringify(historyForBackend));
 
-      const res = await fetch("http://localhost:8000/chat", { method: "POST", body: form });
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/chat`, { method: "POST", body: form });
       if (!res.ok) { const err = await res.json(); throw new Error(err.detail ?? "Backend error"); }
       const data: TraceResponse = await res.json();
 

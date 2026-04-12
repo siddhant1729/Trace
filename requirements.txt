@@ -1,6 +1,7 @@
 langchain
 langgraph
 langchain-google-genai
+google-genai
 faiss-cpu
 python-dotenv
 pillow
