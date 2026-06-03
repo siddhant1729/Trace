@@ -1,90 +1,78 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft, Send, Upload, X, ImageIcon, Code2, GitBranch,
-  Plus, Terminal, Bot, User, RotateCcw,
+  Send, Upload, X, ImageIcon, Code2,
+  RotateCcw, Bot, User, ZoomIn, ZoomOut,
+  MousePointer, PlusSquare,
+  Terminal, Rocket,
 } from "lucide-react";
-import ThemeToggle from "@/components/ThemeToggle";
+import { useRouter } from "next/navigation";
+import StarField from "@/components/StarField";
 
-// ── Types ──────────────────────────────────────────────────────────────────
-interface Entity { label: string; type: string; bbox?: number[]; }
-interface Edge {
-  from: string; to: string;
-  from_type?: string; to_type?: string;
-  label?: string; action?: string;
-}
-interface TraceResponse {
-  reply: string; entities: Entity[]; edges: Edge[]; generated_code?: string;
-}
-interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-  traceResult?: TraceResponse;
-}
-interface Session {
-  id: string;
-  title: string;
-  messages: ChatMessage[];
-  file: File | null;
-}
+// ── Types ─────────────────────────────────────────────────────────────────────
+interface Entity   { label: string; type: string; }
+interface Edge     { from: string; to: string; label?: string; action?: string; }
+interface TraceResponse { reply: string; entities: Entity[]; edges: Edge[]; generated_code?: string; }
+interface ChatMessage   { role: "user" | "assistant"; content: string; traceResult?: TraceResponse; }
+interface CanvasNode    { id: string; label: string; type: string; sub: string; x: number; y: number; active?: boolean; }
 
-// ── Markdown renderer — Notion-style ─────────────────────────────────────
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+// ── Canvas types ──────────────────────────────────────────────────────────────
+type CanvasEdge = { from: string; to: string; label?: string };
 
-function renderReply(text: string) {
-  const elements: React.ReactNode[] = [];
-  // Split on fenced code blocks (```lang\n...\n```)
+// Default nodes/edges only used internally — canvas starts empty
+const DEFAULT_NODES: CanvasNode[] = [];
+const DEFAULT_EDGES: CanvasEdge[] = [];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function escapeHtml(s: string) {
+  return s
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function inlineMd(t: string) {
+  return t
+    .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#fff">$1</strong>')
+    .replace(/`([^`]+)`/g, '<code style="font-family:JetBrains Mono,monospace;font-size:0.8em;background:rgba(255,255,255,0.07);padding:1px 6px;border-radius:3px">$1</code>');
+}
+function renderReply(text: string): React.ReactNode[] {
+  const els: React.ReactNode[] = [];
   const parts = text.split(/(```[\w]*\n[\s\S]*?```)/g);
-
   parts.forEach((part, idx) => {
-    const fenceMatch = part.match(/^```([\w]*)\n([\s\S]*?)```$/);
-    if (fenceMatch) {
-      const lang = fenceMatch[1] || "code";
-      const code = fenceMatch[2];
-      elements.push(
-        <div key={idx} style={{ position: "relative", margin: "0.75rem 0" }}>
-          {/* Language label */}
+    const fence = part.match(/^```([\w]*)\n([\s\S]*?)```$/);
+    if (fence) {
+      const lang = fence[1] || "code";
+      const code = fence[2];
+      els.push(
+        <div key={idx} style={{ margin: "10px 0" }}>
           <div style={{
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-            padding: "4px 12px",
-            background: "var(--surface-raised)",
-            borderRadius: "8px 8px 0 0",
-            border: "1px solid var(--border)",
+            display: "flex", justifyContent: "space-between",
+            padding: "5px 12px",
+            background: "rgba(255,255,255,0.03)",
+            border: "1px solid rgba(255,255,255,0.08)",
             borderBottom: "none",
-            fontSize: "0.7rem", fontWeight: 600,
-            color: "var(--text-muted)",
-            fontFamily: "monospace",
+            borderRadius: "4px 4px 0 0",
+            fontSize: "10px",
+            color: "rgba(255,255,255,0.3)",
+            fontFamily: "JetBrains Mono,monospace",
           }}>
             <span>{lang}</span>
             <button
               onClick={() => navigator.clipboard.writeText(code)}
-              style={{
-                background: "none", border: "none", cursor: "pointer",
-                color: "var(--accent)", fontSize: "0.7rem", fontWeight: 600,
-                padding: "2px 6px", borderRadius: "4px",
-              }}
-            >Copy</button>
+              style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: "9px", cursor: "pointer", letterSpacing: "0.1em" }}
+            >
+              COPY
+            </button>
           </div>
-          {/* Code block */}
           <pre style={{
-            margin: 0,
-            padding: "1rem",
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: "0 0 8px 8px",
-            overflowX: "auto",
-            fontSize: "0.82rem",
-            lineHeight: 1.65,
-            fontFamily: "'Fira Code', 'Cascadia Code', 'Consolas', monospace",
+            margin: 0, padding: "14px",
+            background: "rgba(0,0,0,0.6)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: "0 0 4px 4px",
+            overflow: "auto", fontSize: "12px",
+            fontFamily: "JetBrains Mono,monospace",
+            color: "rgba(196,199,200,0.9)",
+            whiteSpace: "pre-wrap", lineHeight: 1.6,
           }}>
             <code dangerouslySetInnerHTML={{ __html: escapeHtml(code) }} />
           </pre>
@@ -92,674 +80,1000 @@ function renderReply(text: string) {
       );
       return;
     }
-
-    // Non-code section — process line-by-line
-    const lines = part.split("\n");
-    lines.forEach((line, lineIdx) => {
-      const trimmed = line.trim();
-      if (trimmed === "") {
-        elements.push(<div key={`${idx}-${lineIdx}`} style={{ height: "0.5rem" }} />);
-      } else if (/^[\*\-]\s/.test(trimmed)) {
-        const bulletContent = trimmed.slice(2);
-        elements.push(
-          <div key={`${idx}-${lineIdx}`} style={{ display: "flex", alignItems: "baseline", gap: "0.625rem", marginBottom: "0.25rem" }}>
-            <span style={{ color: "var(--accent)", fontSize: "0.6rem", flexShrink: 0, marginTop: "0.3rem" }}>●</span>
-            <span style={{ flex: 1 }} dangerouslySetInnerHTML={{ __html: inlineMarkdown(bulletContent) }} />
+    part.split("\n").forEach((line, li) => {
+      const tr = line.trim();
+      if (!tr) { els.push(<div key={`${idx}-${li}`} style={{ height: "6px" }} />); return; }
+      if (/^[*\-]\s/.test(tr)) {
+        els.push(
+          <div key={`${idx}-${li}`} style={{ display: "flex", gap: "8px", marginBottom: "4px" }}>
+            <span style={{ color: "rgba(255,255,255,0.3)", fontSize: "8px", flexShrink: 0, marginTop: "5px" }}>◆</span>
+            <span style={{ fontSize: "13px" }} dangerouslySetInnerHTML={{ __html: inlineMd(tr.slice(2)) }} />
           </div>
         );
       } else {
-        elements.push(
-          <p key={`${idx}-${lineIdx}`} style={{ marginBottom: "0.25rem" }}
-            dangerouslySetInnerHTML={{ __html: inlineMarkdown(trimmed) }} />
-        );
+        els.push(<p key={`${idx}-${li}`} style={{ margin: "0 0 4px", fontSize: "13px" }} dangerouslySetInnerHTML={{ __html: inlineMd(tr) }} />);
       }
     });
   });
-
-  return elements;
+  return els;
 }
 
-function inlineMarkdown(text: string): string {
-  // **bold** → <strong>
-  let out = text.replace(/\*\*(.+?)\*\*/g, '<strong style="font-weight:600;color:var(--text)">$1</strong>');
-  // `code` → <code>
-  out = out.replace(/`([^`]+)`/g, '<code style="font-family:monospace;font-size:0.8em;background:var(--surface-raised);padding:1px 5px;border-radius:4px;border:1px solid var(--border)">$1</code>');
-  // _italic_
-  out = out.replace(/(?:^|\s)_(.+?)_(?:\s|$)/g, ' <em style="opacity:0.75">$1</em> ');
-  return out;
+// ── Node-type icon (inline SVG) ───────────────────────────────────────────────
+function NodeTypeIcon({ type }: { type: string }) {
+  if (type === "ENTRY_POINT")
+    return <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /></svg>;
+  if (type === "CORE_PROCESS")
+    return <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2" /><path d="M7 12h10M12 7v10" /></svg>;
+  if (type === "STORAGE")
+    return <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5v5c0 1.657 4.03 3 9 3s9-1.343 9-3V5" /><path d="M3 10v5c0 1.657 4.03 3 9 3s9-1.343 9-3v-5" /></svg>;
+  return <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8" /></svg>;
 }
 
+// ── Nebula Canvas ─────────────────────────────────────────────────────────────
+function NebulaCanvas({
+  nodes, edges, onNodeClick, onExportCode, onInitialize,
+}: {
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  onNodeClick: (id: string) => void;
+  onExportCode: () => void;
+  onInitialize: () => void;
+}) {
+  const [zoom, setZoom]       = useState(100);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [activeTool, setActiveTool] = useState(0);
+  const canvasRef = useRef<HTMLDivElement>(null);
 
-// ── Collapsible Diagram Stats ──────────────────────────────────────────────
-type Tab = "entities" | "connections" | "code";
-function TraceResultPanel({ result }: { result: TraceResponse }) {
-  const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<Tab>(result.edges?.length > 0 ? "connections" : "entities");
-  const [hovered, setHovered] = useState<number | null>(null);
+  const getPos = (n: CanvasNode) => positions[n.id] ?? { x: n.x, y: n.y };
 
-  const nodeCount = result.entities.length;
-  const edgeCount = result.edges?.length ?? 0;
-  const hasCode   = !!result.generated_code;
+  const handleMouseDown = (e: React.MouseEvent, id: string) => {
+    e.preventDefault();
+    const pos = positions[id] ?? nodes.find(n => n.id === id)!;
+    setDragging(id);
+    setDragOffset({ x: e.clientX - pos.x, y: e.clientY - pos.y });
+  };
 
-  const tabs: { id: Tab; label: string; count: number }[] = [
-    { id: "entities",    label: "Nodes",       count: nodeCount },
-    { id: "connections", label: "Connections", count: edgeCount },
-    { id: "code",        label: "Code",        count: hasCode ? 1 : 0 },
-  ];
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!dragging) return;
+    setPositions(p => ({ ...p, [dragging]: { x: e.clientX - dragOffset.x, y: e.clientY - dragOffset.y } }));
+  }, [dragging, dragOffset]);
+
+  const handleMouseUp = useCallback(() => setDragging(null), []);
+
+  useEffect(() => {
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup",   handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup",   handleMouseUp);
+    };
+  }, [handleMouseMove, handleMouseUp]);
+
+  const NODE_W = 180;
+  const NODE_H = 90;
 
   return (
-    <div style={{ marginTop: "0.875rem" }}>
-      {/* Pill toggle */}
-      <button
-        onClick={() => setOpen((o) => !o)}
-        style={{
-          display: "inline-flex", alignItems: "center", gap: "0.5rem",
-          padding: "4px 14px", borderRadius: "9999px",
-          border: "1px solid var(--accent-mid)",
-          background: open ? "var(--accent-light)" : "var(--surface-raised)",
-          color: "var(--accent)",
-          fontSize: "0.7rem", fontWeight: 600,
-          cursor: "pointer", transition: "all 0.2s",
-        }}
-      >
-        <GitBranch className="w-3 h-3" />
-        Diagram Stats
-        <span style={{ opacity: 0.6, fontSize: "0.6rem" }}>
-          {nodeCount}N · {edgeCount}E{hasCode ? " · Code" : ""}
-        </span>
-        <span style={{ fontSize: "0.55rem", opacity: 0.5, transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▼</span>
-      </button>
+    <section
+      ref={canvasRef}
+      className="relative overflow-hidden"
+      style={{
+        flex: 1,
+        background: "#0e0e0e",
+        backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.045) 1px, transparent 1px)",
+        backgroundSize: "40px 40px",
+        cursor: dragging ? "grabbing" : "crosshair",
+      }}
+    >
+      {/* ── Floating toolbar (top centre) ── */}
+      <div style={{ position: "absolute", top: 24, left: "50%", transform: "translateX(-50%)", zIndex: 20 }}>
+        <div style={{
+          display: "flex", gap: "2px",
+          background: "rgba(255,255,255,0.03)",
+          backdropFilter: "blur(20px)",
+          border: "1px solid rgba(255,255,255,0.1)",
+          borderTop:  "1px solid rgba(255,255,255,0.28)",
+          borderLeft: "1px solid rgba(255,255,255,0.28)",
+          borderRadius: "8px",
+          padding: "4px",
+        }}>
+          {[
+            { icon: <MousePointer size={16} />, title: "Select"   },
+            { icon: <PlusSquare   size={16} />, title: "Add Node" },
+            { icon: <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>, title: "Connect" },
+          ].map((btn, i) => (
+            <button
+              key={i} title={btn.title}
+              onClick={() => setActiveTool(i)}
+              style={{
+                padding: "8px", borderRadius: "6px",
+                background: activeTool === i ? "rgba(255,255,255,0.1)" : "none",
+                color: activeTool === i ? "#fff" : "rgba(196,199,200,0.45)",
+                border: "none", cursor: "pointer", transition: "all 0.15s", display: "flex",
+              }}
+              onMouseEnter={e => { if (activeTool !== i) (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.07)"; }}
+              onMouseLeave={e => { if (activeTool !== i) (e.currentTarget as HTMLButtonElement).style.background = "none"; }}
+            >
+              {btn.icon}
+            </button>
+          ))}
+          <div style={{ width: "1px", background: "rgba(255,255,255,0.1)", margin: "4px 2px" }} />
+          <button title="Text" style={{ padding: "8px", borderRadius: "6px", background: "none", color: "rgba(196,199,200,0.45)", border: "none", cursor: "pointer", display: "flex" }}>
+            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
+          </button>
+        </div>
+      </div>
 
-      {/* Expanded panel */}
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.22 }}
-            style={{ overflow: "hidden" }}
-          >
-            <div style={{
-              marginTop: "0.5rem",
-              borderRadius: "14px",
-              border: "1px solid var(--border)",
-              background: "var(--surface-raised)",
-              overflow: "hidden",
-            }}>
-              {/* Tab bar */}
-              <div style={{ display: "flex", gap: "0.25rem", padding: "0 0.75rem", borderBottom: "1px solid var(--border)" }}>
-                {tabs.map((t) => (
-                  <button key={t.id} onClick={() => setTab(t.id)} style={{
-                    background: "none", border: "none", cursor: "pointer",
-                    display: "flex", alignItems: "center", gap: "0.375rem",
-                    padding: "0.5rem 0.625rem",
-                    fontSize: "0.68rem",
-                    borderBottom: `2px solid ${tab === t.id ? "var(--accent)" : "transparent"}`,
-                    color: tab === t.id ? "var(--accent)" : "var(--text-subtle)",
-                    marginBottom: "-1px",
-                  }}>
-                    {t.id === "entities" && <ImageIcon className="w-2.5 h-2.5" />}
-                    {t.id === "connections" && <GitBranch className="w-2.5 h-2.5" />}
-                    {t.id === "code" && <Code2 className="w-2.5 h-2.5" />}
-                    {t.label}
-                    {t.count > 0 && (
-                      <span style={{ padding: "1px 5px", borderRadius: "999px", background: "var(--accent-light)", color: "var(--accent)", fontSize: "0.58rem" }}>
-                        {t.count}
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
+      {/* ── Zoom controls (bottom left) ── */}
+      <div style={{ position: "absolute", bottom: 24, left: 24, zIndex: 20 }}>
+        <div style={{
+          display: "flex", flexDirection: "column", gap: "2px",
+          background: "rgba(255,255,255,0.03)",
+          backdropFilter: "blur(20px)",
+          border: "1px solid rgba(255,255,255,0.1)",
+          borderTop:  "1px solid rgba(255,255,255,0.28)",
+          borderLeft: "1px solid rgba(255,255,255,0.28)",
+          borderRadius: "8px", padding: "4px",
+        }}>
+          <button onClick={() => setZoom(z => Math.min(z + 15, 200))} style={{ padding: "8px", background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer", display: "flex", justifyContent: "center" }}>
+            <ZoomIn size={14} />
+          </button>
+          <div style={{ height: "1px", background: "rgba(255,255,255,0.08)", margin: "0 6px" }} />
+          <div style={{ padding: "6px 10px", fontFamily: "JetBrains Mono,monospace", fontSize: "9px", color: "rgba(255,255,255,0.35)", textAlign: "center", letterSpacing: "0.06em" }}>
+            {zoom}%
+          </div>
+          <div style={{ height: "1px", background: "rgba(255,255,255,0.08)", margin: "0 6px" }} />
+          <button onClick={() => setZoom(z => Math.max(z - 15, 40))} style={{ padding: "8px", background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer", display: "flex", justifyContent: "center" }}>
+            <ZoomOut size={14} />
+          </button>
+        </div>
+      </div>
 
-              <div style={{ padding: "0.875rem" }}>
-                {tab === "entities" && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "0.375rem" }}>
-                    {nodeCount === 0
-                      ? <span style={{ fontSize: "0.72rem", color: "var(--text-subtle)" }}>No nodes.</span>
-                      : result.entities.map((e, i) => (
-                        <span key={i} style={{
-                          display: "inline-flex", alignItems: "center", gap: "0.3rem",
-                          padding: "3px 10px", borderRadius: "9999px",
-                          border: "1px solid var(--accent-mid)",
-                          background: "var(--accent-light)", color: "var(--accent)",
-                          fontSize: "0.68rem",
-                        }}>
-                          <span style={{ fontSize: "0.52rem", fontWeight: 700, textTransform: "uppercase", opacity: 0.65 }}>{e.type}</span>
-                          <span style={{ opacity: 0.35 }}>·</span>
-                          {e.label}
-                        </span>
-                      ))
-                    }
-                  </div>
-                )}
+      {/* ── Bottom action buttons ── */}
+      <div style={{ position: "absolute", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 20, display: "flex", gap: "12px" }}>
+        <button
+          onClick={onExportCode}
+          style={{
+            display: "flex", alignItems: "center", gap: "8px",
+            padding: "10px 20px",
+            background: "rgba(42,42,42,0.9)",
+            border: "1px solid rgba(255,255,255,0.1)",
+            color: "rgba(226,226,226,0.7)",
+            fontSize: "11px", fontFamily: "Geist,sans-serif", fontWeight: 600,
+            letterSpacing: "0.1em", textTransform: "uppercase",
+            cursor: "pointer", backdropFilter: "blur(10px)", transition: "all 0.2s",
+          }}
+          onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = "rgba(60,60,60,0.9)"}
+          onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "rgba(42,42,42,0.9)"}
+        >
+          <Terminal size={13} /> Export Code
+        </button>
+        <button
+          onClick={onInitialize}
+          style={{
+            display: "flex", alignItems: "center", gap: "8px",
+            padding: "10px 20px",
+            background: "#fff", border: "none", color: "#1a1a1a",
+            fontSize: "11px", fontFamily: "Geist,sans-serif", fontWeight: 600,
+            letterSpacing: "0.1em", textTransform: "uppercase",
+            cursor: "pointer", transition: "all 0.2s",
+          }}
+          onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 0 24px rgba(255,255,255,0.35)"}
+          onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.boxShadow = "none"}
+        >
+          <Rocket size={13} /> Initialize
+        </button>
+      </div>
 
-                {tab === "connections" && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "0.375rem" }}>
-                    {edgeCount === 0
-                      ? <span style={{ fontSize: "0.72rem", color: "var(--text-subtle)" }}>No edges.</span>
-                      : result.edges.map((ed, i) => (
-                        <div key={i}
-                          onMouseEnter={() => setHovered(i)}
-                          onMouseLeave={() => setHovered(null)}
-                          style={{
-                            display: "flex", alignItems: "center", gap: "0.375rem",
-                            padding: "0.375rem 0.625rem", borderRadius: "8px",
-                            border: `1px solid ${hovered === i ? "var(--accent-mid)" : "var(--border)"}`,
-                            background: hovered === i ? "var(--accent-light)" : "transparent",
-                            fontSize: "0.68rem", transition: "all 0.15s",
-                          }}>
-                          <span style={{ padding: "1px 8px", borderRadius: "9999px", border: "1px solid var(--accent-mid)", background: "var(--accent-light)", color: "var(--accent)" }}>{ed.from}</span>
-                          <span style={{ display: "flex", alignItems: "center", gap: "0.2rem", color: "var(--text-subtle)" }}>
-                            <span style={{ width: "0.5rem", height: "1px", background: "currentColor", display: "inline-block" }} />
-                            <span style={{ padding: "1px 6px", borderRadius: "9999px", border: "1px solid var(--accent-mid)", background: "var(--accent-light)", color: "var(--accent)", fontSize: "0.58rem" }}>{ed.label || "connects"}</span>
-                            <span>➚</span>
-                          </span>
-                          <span style={{ padding: "1px 8px", borderRadius: "9999px", border: "1px solid var(--accent-mid)", background: "var(--accent-light)", color: "var(--accent)" }}>{ed.to}</span>
-                        </div>
-                      ))
-                    }
-                  </div>
-                )}
-
-                {tab === "code" && (
-                  hasCode
-                    ? <pre style={{ padding: "0.875rem", borderRadius: "8px", background: "#0d0d14", border: "1px solid rgba(255,255,255,0.07)", color: "#c4b5fd", fontSize: "0.68rem", fontFamily: "monospace", overflowX: "auto", whiteSpace: "pre-wrap" }}>
-                        {result.generated_code}
-                      </pre>
-                    : <span style={{ fontSize: "0.72rem", color: "var(--text-subtle)" }}>No code generated.</span>
-                )}
-              </div>
+      {/* ── Empty state placeholder ── */}
+      {nodes.length === 0 && (
+        <div style={{
+          position: "absolute", inset: 0, zIndex: 8,
+          display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center",
+          pointerEvents: "none",
+          gap: "20px",
+        }}>
+          <svg width="64" height="64" fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="1" viewBox="0 0 64 64">
+            <rect x="8" y="8" width="20" height="14" rx="2" />
+            <rect x="36" y="8" width="20" height="14" rx="2" />
+            <rect x="8" y="42" width="20" height="14" rx="2" />
+            <rect x="36" y="42" width="20" height="14" rx="2" />
+            <path d="M18 22v8M46 22v8M18 42V30M46 42V30M18 30h28" strokeDasharray="3 3" />
+          </svg>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontFamily: "Sora,sans-serif", fontSize: "15px", color: "rgba(255,255,255,0.2)", fontWeight: 600, marginBottom: "8px" }}>
+              Canvas Empty
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+            <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: "10px", color: "rgba(255,255,255,0.1)", letterSpacing: "0.12em", textTransform: "uppercase" }}>
+              Upload a diagram and send a message
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{
+        position: "absolute", top: 28, left: 28,
+        fontFamily: "JetBrains Mono,monospace", fontSize: "9px",
+        color: "rgba(255,255,255,0.15)", letterSpacing: "0.2em",
+        textTransform: "uppercase", zIndex: 2,
+      }}>
+        nebula://canvas · session:v_alpha_9
+      </div>
+
+      {/* ── SVG connector layer ── */}
+      <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 5 }}>
+        <defs>
+          <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+            <path d="M 0 0 L 6 3 L 0 6 z" fill="rgba(255,255,255,0.2)" />
+          </marker>
+        </defs>
+        {edges.map((edge, i) => {
+          const from = nodes.find(n => n.id === edge.from)!;
+          const to   = nodes.find(n => n.id === edge.to)!;
+          const fp   = getPos(from);
+          const tp   = getPos(to);
+          // connect right-centre of source → left-centre of target
+          const x1 = fp.x + NODE_W;
+          const y1 = fp.y + NODE_H / 2;
+          const x2 = tp.x;
+          const y2 = tp.y + NODE_H / 2;
+          const mx = (x1 + x2) / 2;
+          return (
+            <path
+              key={i}
+              d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
+              fill="none"
+              stroke="rgba(255,255,255,0.15)"
+              strokeWidth="1"
+              strokeDasharray="5 4"
+              style={{ animation: `flow ${18 + i * 3}s linear infinite` }}
+              markerEnd="url(#arrowhead)"
+            />
+          );
+        })}
+      </svg>
+
+      {/* ── Nodes layer ── */}
+      <div style={{
+        position: "absolute", inset: 0, zIndex: 10,
+        transform: `scale(${zoom / 100})`, transformOrigin: "center center",
+      }}>
+        {nodes.map(node => {
+          const pos = getPos(node);
+          return (
+            <div
+              key={node.id}
+              onMouseDown={e => handleMouseDown(e, node.id)}
+              onClick={() => onNodeClick(node.id)}
+              style={{
+                position: "absolute",
+                left: pos.x, top: pos.y,
+                width: `${NODE_W}px`,
+                background: node.active ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.025)",
+                backdropFilter: "blur(20px)",
+                border:     node.active ? "1px solid rgba(255,255,255,0.4)" : "1px solid rgba(255,255,255,0.1)",
+                borderTop:  node.active ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.25)",
+                borderLeft: node.active ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.25)",
+                padding: "20px",
+                borderRadius: "4px",
+                cursor: "grab",
+                userSelect: "none",
+                transition: "box-shadow 0.2s, border-color 0.2s, transform 0.15s",
+                boxShadow: node.active
+                  ? "0 0 20px rgba(255,255,255,0.1), 0 8px 32px rgba(0,0,0,0.5)"
+                  : "0 4px 16px rgba(0,0,0,0.4)",
+              }}
+              onMouseEnter={e => {
+                (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(255,255,255,0.35)";
+                (e.currentTarget as HTMLDivElement).style.transform = "scale(1.02)";
+              }}
+              onMouseLeave={e => {
+                (e.currentTarget as HTMLDivElement).style.borderColor = node.active ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.1)";
+                (e.currentTarget as HTMLDivElement).style.transform = "scale(1)";
+              }}
+            >
+              {/* Specular corner */}
+              <div style={{ position: "absolute", top: 0, left: 0, width: "28px", height: "1px", background: "rgba(255,255,255,0.55)", borderTopLeftRadius: "4px" }} />
+
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
+                <span style={{ color: node.active ? "#fff" : "rgba(255,255,255,0.4)" }}>
+                  <NodeTypeIcon type={node.type} />
+                </span>
+                <span style={{
+                  fontFamily: "JetBrains Mono,monospace", fontSize: "8px",
+                  color: node.active ? "rgba(255,255,255,0.85)" : "rgba(196,199,200,0.3)",
+                  letterSpacing: "0.12em", textTransform: "uppercase",
+                }}>
+                  {node.type}
+                </span>
+              </div>
+
+              <div style={{ fontFamily: "Sora,sans-serif", fontSize: "14px", fontWeight: 600, color: "#fff", marginBottom: "12px" }}>
+                {node.label}
+              </div>
+
+              {node.active ? (
+                <div style={{ height: "3px", background: "rgba(255,255,255,0.08)", borderRadius: "2px", overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: "33%", background: "rgba(255,255,255,0.75)", borderRadius: "2px", animation: "loadPulse 2s ease-in-out infinite" }} />
+                </div>
+              ) : (
+                <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: "9px", color: "rgba(196,199,200,0.4)", letterSpacing: "0.08em" }}>
+                  {node.sub}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <style>{`
+        @keyframes flow { from { stroke-dashoffset: 40; } to { stroke-dashoffset: 0; } }
+        @keyframes loadPulse { 0%,100% { opacity:0.5; width:20%; } 50% { opacity:1; width:50%; } }
+      `}</style>
+    </section>
   );
 }
 
-// ── Main chat page ─────────────────────────────────────────────────────────
-export default function ChatPage() {
-  const router = useRouter();
-  const fileRef = useRef<HTMLInputElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+// ── Chat Sidebar ──────────────────────────────────────────────────────────────
+function ChatSidebar({
+  messages, loading, error, file,
+  onSubmit, onFileChange, onFileRemove, onReset,
+  query, setQuery,
+}: {
+  messages: ChatMessage[];
+  loading: boolean;
+  error: string | null;
+  file: File | null;
+  onSubmit: (e: React.FormEvent) => void;
+  onFileChange: (f: File) => void;
+  onFileRemove: () => void;
+  onReset: () => void;
+  query: string;
+  setQuery: (v: string) => void;
+}) {
+  const bottomRef   = useRef<HTMLDivElement>(null);
+  const fileRef     = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [dropHover, setDropHover] = useState(false);
 
-  const newSession = useCallback((): Session => ({
-    id: crypto.randomUUID(),
-    title: "New session",
-    messages: [],
-    file: null,
-  }), []);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
 
-  const [sessions, setSessions] = useState<Session[]>(() => []);
-  const [activeId, setActiveId] = useState<string>("");
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [dragging, setDragging] = useState(false);
-
-  // Init first session
-  useEffect(() => {
-    const s = newSession();
-    setSessions([s]);
-    setActiveId(s.id);
-  }, [newSession]);
-
-  const active = sessions.find((s) => s.id === activeId);
-
-  const updateSession = useCallback((id: string, patch: Partial<Session>) => {
-    setSessions((prev) => prev.map((s) => s.id === id ? { ...s, ...patch } : s));
-  }, []);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [active?.messages, loading]);
-
-  const handleFile = (f: File) => {
-    if (!f.type.startsWith("image/")) { setError("Please upload an image file."); return; }
-    if (active) updateSession(active.id, { file: f });
-    setError(null);
+  const autoResize = () => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 140)}px`;
   };
 
-  const createNewSession = () => {
-    const s = newSession();
-    setSessions((prev) => [...prev, s]);
-    setActiveId(s.id);
+  return (
+    <aside style={{
+      width: "420px", flexShrink: 0,
+      display: "flex", flexDirection: "column",
+      background: "rgba(255,255,255,0.02)",
+      backdropFilter: "blur(20px)",
+      borderLeft: "1px solid rgba(255,255,255,0.1)",
+      position: "relative", zIndex: 30,
+    }}>
+      {/* Top specular line */}
+      <div style={{
+        position: "absolute", top: 0, left: 0, right: 0, height: "1px",
+        background: "linear-gradient(to right, rgba(255,255,255,0.35), rgba(255,255,255,0.05))",
+      }} />
+
+      {/* ── Header ── */}
+      <div style={{
+        padding: "24px",
+        borderBottom: "1px solid rgba(255,255,255,0.08)",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        flexShrink: 0,
+      }}>
+        <div>
+          <h2 style={{ fontFamily: "Sora,sans-serif", fontSize: "18px", fontWeight: 600, color: "#fff", marginBottom: "6px" }}>
+            Trace Chat
+          </h2>
+          <p style={{ fontFamily: "JetBrains Mono,monospace", fontSize: "9px", color: "rgba(196,199,200,0.35)", letterSpacing: "0.2em", textTransform: "uppercase", display: "flex", alignItems: "center", gap: "6px" }}>
+            <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#fff", opacity: 0.6, animation: "pulseStatus 2s infinite" }} />
+            NEURAL_SYNC_STABLE
+          </p>
+        </div>
+        <button
+          onClick={onReset}
+          style={{
+            padding: "8px", background: "none",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: "4px", cursor: "pointer",
+            color: "rgba(196,199,200,0.45)", display: "flex", transition: "all 0.2s",
+          }}
+          onMouseEnter={e => {
+            const b = e.currentTarget as HTMLButtonElement;
+            b.style.background = "rgba(255,255,255,0.06)";
+            b.style.color = "#fff";
+          }}
+          onMouseLeave={e => {
+            const b = e.currentTarget as HTMLButtonElement;
+            b.style.background = "none";
+            b.style.color = "rgba(196,199,200,0.45)";
+          }}
+          title="Clear chat"
+        >
+          <RotateCcw size={14} />
+        </button>
+      </div>
+
+      {/* ── Messages ── */}
+      <div
+        className="custom-scrollbar"
+        style={{ flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: "28px" }}
+      >
+        {/* Empty state */}
+        {messages.length === 0 && !loading && (
+          <div style={{
+            color: "rgba(196,199,200,0.3)",
+            fontFamily: "JetBrains Mono,monospace", fontSize: "11px",
+            letterSpacing: "0.08em", textAlign: "center", marginTop: "40px",
+          }}>
+            <div style={{
+              width: "44px", height: "44px",
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderTop: "1px solid rgba(255,255,255,0.3)",
+              borderLeft: "1px solid rgba(255,255,255,0.3)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              margin: "0 auto 16px",
+            }}>
+              <Terminal size={18} style={{ color: "rgba(255,255,255,0.4)" }} />
+            </div>
+            UPLOAD A DIAGRAM TO BEGIN<br />
+            <span style={{ opacity: 0.5 }}>or type a command below</span>
+          </div>
+        )}
+
+        <AnimatePresence initial={false}>
+          {messages.map((msg, idx) => (
+            <motion.div
+              key={idx}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.28, ease: "easeOut" }}
+            >
+              {msg.role === "assistant" ? (
+                <div style={{ display: "flex", gap: "14px" }}>
+                  {/* AI avatar */}
+                  <div style={{
+                    width: "32px", height: "32px", flexShrink: 0,
+                    background: "rgba(255,255,255,0.03)",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    borderTop: "1px solid rgba(255,255,255,0.3)",
+                    borderLeft: "1px solid rgba(255,255,255,0.3)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    <Bot size={13} style={{ color: "rgba(255,255,255,0.6)" }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ color: "rgba(196,199,200,0.85)", lineHeight: 1.75, marginBottom: msg.traceResult ? "12px" : 0 }}>
+                      {renderReply(msg.content)}
+                    </div>
+                    {/* Generated code block */}
+                    {msg.traceResult?.generated_code && (
+                      <div style={{
+                        background: "rgba(255,255,255,0.03)",
+                        border: "1px solid rgba(255,255,255,0.07)",
+                        borderRadius: "4px", padding: "12px", marginTop: "10px",
+                      }}>
+                        <div style={{
+                          display: "flex", justifyContent: "space-between",
+                          marginBottom: "8px", opacity: 0.3,
+                          fontFamily: "JetBrains Mono,monospace", fontSize: "10px",
+                        }}>
+                          <span>generated.sh</span>
+                          <button
+                            onClick={() => navigator.clipboard.writeText(msg.traceResult?.generated_code || "")}
+                            style={{ background: "none", border: "none", cursor: "pointer", color: "inherit", display: "flex" }}
+                          >
+                            <Code2 size={12} />
+                          </button>
+                        </div>
+                        <code style={{ fontFamily: "JetBrains Mono,monospace", fontSize: "12px", color: "rgba(196,199,200,0.85)", lineHeight: 1.6 }}>
+                          {msg.traceResult.generated_code}
+                        </code>
+                      </div>
+                    )}
+                    {/* Entity + edge chips */}
+                    {msg.traceResult && (msg.traceResult.entities.length > 0 || (msg.traceResult.edges?.length ?? 0) > 0) && (
+                      <div style={{ marginTop: "12px", display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                        {msg.traceResult.entities.slice(0, 6).map((e, i) => (
+                          <span key={i} style={{
+                            padding: "3px 10px",
+                            border: "1px solid rgba(255,255,255,0.1)",
+                            borderRadius: "9999px",
+                            fontFamily: "JetBrains Mono,monospace", fontSize: "10px",
+                            color: "rgba(196,199,200,0.5)",
+                            background: "rgba(255,255,255,0.03)",
+                          }}>
+                            {e.label}
+                          </span>
+                        ))}
+                        {msg.traceResult.edges?.slice(0, 3).map((e, i) => (
+                          <span key={`e${i}`} style={{
+                            padding: "3px 10px",
+                            border: "1px solid rgba(255,255,255,0.07)",
+                            borderRadius: "9999px",
+                            fontFamily: "JetBrains Mono,monospace", fontSize: "10px",
+                            color: "rgba(196,199,200,0.3)",
+                          }}>
+                            {e.from} → {e.to}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "row-reverse", gap: "14px" }}>
+                  {/* User avatar */}
+                  <div style={{
+                    width: "32px", height: "32px", flexShrink: 0,
+                    background: "#fff",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    <User size={13} style={{ color: "#1a1a1a" }} />
+                  </div>
+                  <div style={{ textAlign: "right", flex: 1 }}>
+                    <div style={{
+                      display: "inline-block",
+                      background: "rgba(255,255,255,0.05)",
+                      border: "1px solid rgba(255,255,255,0.12)",
+                      borderTop: "1px solid rgba(255,255,255,0.25)",
+                      borderLeft: "1px solid rgba(255,255,255,0.25)",
+                      padding: "12px 16px",
+                      color: "#fff", fontSize: "13px", fontFamily: "Geist,sans-serif",
+                      lineHeight: 1.65, borderRadius: "2px", textAlign: "left",
+                    }}>
+                      {msg.content}
+                    </div>
+                    <div style={{
+                      marginTop: "5px",
+                      fontFamily: "JetBrains Mono,monospace", fontSize: "8px",
+                      color: "rgba(196,199,200,0.2)", letterSpacing: "0.12em", textTransform: "uppercase",
+                    }}>
+                      Delivered
+                    </div>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          ))}
+        </AnimatePresence>
+
+        {/* Loading dots */}
+        {loading && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ display: "flex", gap: "14px" }}>
+            <div style={{
+              width: "32px", height: "32px", flexShrink: 0,
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderTop: "1px solid rgba(255,255,255,0.3)",
+              borderLeft: "1px solid rgba(255,255,255,0.3)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="2">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+              </svg>
+            </div>
+            <div style={{ display: "flex", gap: "5px", alignItems: "center", height: "32px" }}>
+              {[0, 1, 2].map(i => (
+                <motion.div
+                  key={i}
+                  style={{ width: "5px", height: "5px", background: "rgba(255,255,255,0.3)", borderRadius: "1px" }}
+                  animate={{ opacity: [0.2, 0.8, 0.2], scaleY: [0.5, 1, 0.5] }}
+                  transition={{ duration: 1.3, repeat: Infinity, delay: i * 0.22 }}
+                />
+              ))}
+            </div>
+          </motion.div>
+        )}
+
+        <div ref={bottomRef} />
+      </div>
+
+      {/* ── Input area ── */}
+      <div style={{
+        borderTop: "1px solid rgba(255,255,255,0.08)",
+        padding: "20px",
+        background: "rgba(0,0,0,0.2)",
+        flexShrink: 0,
+      }}>
+        {/* File zone */}
+        {file ? (
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+            <span style={{
+              display: "inline-flex", alignItems: "center", gap: "6px",
+              padding: "4px 12px",
+              border: "1px solid rgba(255,255,255,0.1)",
+              background: "rgba(255,255,255,0.03)",
+              fontFamily: "JetBrains Mono,monospace", fontSize: "10px",
+              color: "rgba(196,199,200,0.6)", letterSpacing: "0.04em", borderRadius: "2px",
+            }}>
+              <ImageIcon size={10} />
+              {file.name.slice(0, 32)}{file.name.length > 32 ? "…" : ""}
+              <button
+                type="button" onClick={onFileRemove}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.3)", display: "flex", marginLeft: "4px" }}
+              >
+                <X size={10} />
+              </button>
+            </span>
+          </div>
+        ) : (
+          <div
+            onClick={() => fileRef.current?.click()}
+            onDragOver={e => { e.preventDefault(); setDropHover(true); }}
+            onDragLeave={() => setDropHover(false)}
+            onDrop={e => {
+              e.preventDefault(); setDropHover(false);
+              if (e.dataTransfer.files[0]) onFileChange(e.dataTransfer.files[0]);
+            }}
+            style={{
+              display: "flex", alignItems: "center", gap: "8px",
+              padding: "10px 14px",
+              border: `1px dashed ${dropHover ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.12)"}`,
+              background: dropHover ? "rgba(255,255,255,0.04)" : "transparent",
+              cursor: "pointer", marginBottom: "12px",
+              fontSize: "11px", color: "rgba(196,199,200,0.4)",
+              fontFamily: "Geist,sans-serif", borderRadius: "2px", transition: "all 0.2s",
+            }}
+          >
+            <Upload size={12} />
+            Drop diagram or <span style={{ color: "rgba(255,255,255,0.55)" }}>browse</span>
+          </div>
+        )}
+        <input
+          ref={fileRef} type="file" accept="image/*"
+          style={{ display: "none" }}
+          onChange={e => { if (e.target.files?.[0]) onFileChange(e.target.files[0]); }}
+        />
+
+        {/* Input box */}
+        <form onSubmit={onSubmit}>
+          <div
+            style={{
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderTop:  "1px solid rgba(255,255,255,0.22)",
+              borderLeft: "1px solid rgba(255,255,255,0.22)",
+              borderRadius: "4px", overflow: "hidden", transition: "box-shadow 0.2s",
+            }}
+            onFocusCapture={e => (e.currentTarget as HTMLDivElement).style.boxShadow = "0 0 0 1px rgba(255,255,255,0.18), 0 0 14px rgba(255,255,255,0.05)"}
+            onBlurCapture={e => (e.currentTarget as HTMLDivElement).style.boxShadow = "none"}
+          >
+            <textarea
+              ref={textareaRef}
+              value={query}
+              onChange={e => { setQuery(e.target.value); autoResize(); }}
+              onKeyDown={e => {
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  onSubmit(e as unknown as React.FormEvent);
+                }
+              }}
+              placeholder="Trace your command..."
+              rows={2}
+              className="chat-textarea"
+              style={{
+                width: "100%", background: "transparent", border: "none",
+                color: "#e2e2e2", fontSize: "13px", fontFamily: "Geist,sans-serif",
+                lineHeight: 1.65, padding: "14px", outline: "none",
+                resize: "none", display: "block",
+              }}
+            />
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "8px 12px", borderTop: "1px solid rgba(255,255,255,0.06)",
+            }}>
+              <div style={{ display: "flex", gap: "4px" }}>
+                {[
+                  { icon: <Upload size={15} />, title: "Attach", onClick: () => fileRef.current?.click() },
+                  { icon: <Code2  size={15} />, title: "Code",   onClick: () => {} },
+                ].map((btn, i) => (
+                  <button
+                    key={i} type="button" title={btn.title} onClick={btn.onClick}
+                    style={{
+                      padding: "6px", background: "none", border: "none",
+                      color: "rgba(196,199,200,0.3)", cursor: "pointer",
+                      display: "flex", borderRadius: "4px", transition: "all 0.15s",
+                    }}
+                    onMouseEnter={e => {
+                      const b = e.currentTarget as HTMLButtonElement;
+                      b.style.color = "#fff"; b.style.background = "rgba(255,255,255,0.06)";
+                    }}
+                    onMouseLeave={e => {
+                      const b = e.currentTarget as HTMLButtonElement;
+                      b.style.color = "rgba(196,199,200,0.3)"; b.style.background = "none";
+                    }}
+                  >
+                    {btn.icon}
+                  </button>
+                ))}
+              </div>
+              <motion.button
+                type="submit" disabled={loading}
+                whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.94 }}
+                style={{
+                  width: "32px", height: "32px",
+                  background: loading ? "rgba(255,255,255,0.15)" : "#fff",
+                  border: "none", cursor: loading ? "not-allowed" : "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  borderRadius: "2px", flexShrink: 0, transition: "box-shadow 0.2s",
+                }}
+                onMouseEnter={e => { if (!loading) (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 0 16px rgba(255,255,255,0.4)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.boxShadow = "none"; }}
+              >
+                {loading
+                  ? <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                      style={{ width: "12px", height: "12px", borderRadius: "50%", border: "2px solid rgba(0,0,0,0.2)", borderTopColor: "#1a1a1a" }}
+                    />
+                  : <Send size={13} style={{ color: "#1a1a1a" }} />}
+              </motion.button>
+            </div>
+          </div>
+        </form>
+
+        <div style={{ textAlign: "center", marginTop: "10px", fontFamily: "JetBrains Mono,monospace", fontSize: "8px", color: "rgba(196,199,200,0.15)", letterSpacing: "0.2em", textTransform: "uppercase" }}>
+          TRANSMIT: CTRL + ENTER
+        </div>
+
+        {error && (
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            style={{ marginTop: "8px", fontSize: "10px", color: "rgba(255,80,80,0.85)", fontFamily: "JetBrains Mono,monospace", letterSpacing: "0.04em" }}
+          >
+            ✗ {error}
+          </motion.p>
+        )}
+      </div>
+
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar { width: 3px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+        @keyframes pulseStatus { 0%,100%{opacity:0.4;transform:scale(0.95);} 50%{opacity:1;transform:scale(1.1);} }
+      `}</style>
+    </aside>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+export default function ChatPage() {
+  const router = useRouter();
+  const [nodes,    setNodes]    = useState<CanvasNode[]>([]);
+  const [edges,    setEdges]    = useState<CanvasEdge[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [query,    setQuery]    = useState("");
+  const [file,     setFile]     = useState<File | null>(null);
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState<string | null>(null);
+  // stores latest generated code so Export Code button can access it
+  const latestCodeRef = useRef<string>("");
+
+  const handleNodeClick = (id: string) => {
+    setNodes(prev => prev.map(n => ({ ...n, active: n.id === id })));
+    const node = nodes.find(n => n.id === id);
+    if (node) setQuery(`Tell me about the ${node.label} node`);
+  };
+
+  // Reset all state to defaults
+  const handleReset = () => {
+    setMessages([]);
+    setNodes([]);
+    setEdges([]);
+    setFile(null);
     setQuery("");
     setError(null);
+    latestCodeRef.current = "";
+  };
+
+  // Download generated code as a file
+  const handleExportCode = () => {
+    const code = latestCodeRef.current;
+    if (!code) {
+      setError("No generated code yet — send a diagram first.");
+      return;
+    }
+    const isSQL = code.trimStart().startsWith("--");
+    const ext   = isSQL ? ".sql" : ".py";
+    const blob  = new Blob([code], { type: "text/plain" });
+    const url   = URL.createObjectURL(blob);
+    const a     = document.createElement("a");
+    a.href     = url;
+    a.download = `trace_generated${ext}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // "Initialize" — trigger submit if ready, else focus input
+  const chatInputRef = useRef<HTMLFormElement | null>(null);
+  const handleInitialize = () => {
+    if (file && query.trim()) {
+      // Simulate form submit
+      chatInputRef.current?.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+    } else {
+      // Focus the chat textarea via querySelector
+      const ta = document.querySelector<HTMLTextAreaElement>(".chat-textarea");
+      ta?.focus();
+      if (!file) setError("Upload a diagram image first.");
+    }
+  };
+
+
+  const handleFileChange = (f: File) => {
+    if (!f.type.startsWith("image/")) { setError("Please upload an image file."); return; }
+    setFile(f); setError(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!active) return;
-    if (!active.file) { setError("Upload a diagram image first."); return; }
+    if (!file)        { setError("Upload a diagram image first."); return; }
     if (!query.trim()) { setError("Ask something about your diagram."); return; }
 
     const userMsg: ChatMessage = { role: "user", content: query.trim() };
-    const prevMessages = [...active.messages, userMsg];
-    const historyForBackend = active.messages.map((m) => ({ role: m.role, content: m.content }));
-
-    // Update title on first message
-    const isFirst = active.messages.length === 0;
-    updateSession(active.id, {
-      messages: prevMessages,
-      ...(isFirst ? { title: query.trim().slice(0, 40) } : {}),
-    });
-    setQuery("");
-    setLoading(true);
-    setError(null);
+    const historyForBackend = messages.map(m => ({ role: m.role, content: m.content }));
+    setMessages(prev => [...prev, userMsg]);
+    setQuery(""); setLoading(true); setError(null);
 
     try {
       const form = new FormData();
-      form.append("query", userMsg.content);
-      form.append("file", active.file);
+      form.append("query",   userMsg.content);
+      form.append("file",    file);
       form.append("history", JSON.stringify(historyForBackend));
-
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/chat`, { method: "POST", body: form });
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/chat`,
+        { method: "POST", body: form }
+      );
       if (!res.ok) { const err = await res.json(); throw new Error(err.detail ?? "Backend error"); }
       const data: TraceResponse = await res.json();
+      // Cache generated code for the Export button
+      if (data.generated_code) latestCodeRef.current = data.generated_code;
+      setMessages(prev => [...prev, { role: "assistant", content: data.reply, traceResult: data }]);
 
-      updateSession(active.id, {
-        messages: [...prevMessages, { role: "assistant", content: data.reply, traceResult: data }],
-      });
+
+      if (data.entities.length > 0) {
+        // Layout nodes in a smart multi-column grid
+        const cols = Math.ceil(Math.sqrt(data.entities.length));
+        const newNodes: CanvasNode[] = data.entities.map((e, i) => ({
+          id:     `n${i + 1}`,
+          label:  e.label,
+          type:   e.type.toUpperCase(),
+          sub:    `${e.type} · node:${String(i + 1).padStart(3, "0")}`,
+          x:      80  + (i % cols)           * 260,
+          y:      80  + Math.floor(i / cols) * 180,
+          active: i === 0,
+        }));
+        setNodes(newNodes);
+
+        // Map backend edges (which use label-based from/to) to canvas node IDs
+        if (data.edges && data.edges.length > 0) {
+          const labelToId: Record<string, string> = {};
+          newNodes.forEach(n => { labelToId[n.label] = n.id; });
+          const newEdges: CanvasEdge[] = data.edges
+            .map(ed => ({
+              from:  labelToId[ed.from] ?? "",
+              to:    labelToId[ed.to]   ?? "",
+              label: ed.label,
+            }))
+            .filter(ed => ed.from && ed.to && ed.from !== ed.to);
+          setEdges(newEdges);
+        } else {
+          // Auto-wire nodes in sequence if no edges returned
+          const autoEdges: CanvasEdge[] = newNodes.slice(0, -1).map((n, i) => ({
+            from: n.id,
+            to:   newNodes[i + 1].id,
+          }));
+          setEdges(autoEdges);
+        }
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
-      updateSession(active.id, { messages: active.messages });
+      setMessages(prev => prev.slice(0, -1));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.97 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.4, ease: "easeOut" }}
-      style={{
-        display: "flex",
-        height: "100vh",
-        width: "100vw",
-        overflow: "hidden",
-        background: "var(--bg)",
-      }}
-    >
-      {/* ── Sidebar ─────────────────────────────────────────────────── */}
-      <aside style={{
-        width: "260px",
-        flexShrink: 0,
-        height: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        borderRight: "1px solid var(--border)",
-        background: "var(--surface)",
-      }}>
-        {/* Sidebar header */}
-        <div style={{
-          padding: "1rem 1rem 0.75rem",
-          borderBottom: "1px solid var(--border)",
-          display: "flex",
-          flexDirection: "column",
-          gap: "0.75rem",
-        }}>
-          {/* Back + title */}
-          <div style={{ display: "flex", alignItems: "center", gap: "0.625rem" }}>
-            <button
-              onClick={() => router.push("/")}
-              style={{
-                background: "none", border: "none", cursor: "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                width: "1.75rem", height: "1.75rem", borderRadius: "8px",
-                color: "var(--text-muted)",
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-light)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--accent)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "none"; (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; }}
-              title="Back to home"
-            >
-              <ArrowLeft className="w-4 h-4" />
-            </button>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.375rem" }}>
-              <Terminal className="w-3.5 h-3.5" style={{ color: "var(--accent)" }} />
-              <span style={{ fontSize: "0.7rem", fontFamily: "monospace", color: "var(--text-muted)", letterSpacing: "0.06em" }}>
-                trace://chat
-              </span>
-            </div>
-          </div>
+    <div style={{
+      display: "flex", flexDirection: "column",
+      height: "100vh", width: "100vw",
+      overflow: "hidden", background: "#0e0e0e", position: "relative",
+    }}>
+      <StarField />
 
-          {/* New session button */}
-          <button
-            onClick={createNewSession}
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem",
-              padding: "0.5rem 0.75rem",
-              borderRadius: "10px",
-              border: "1px solid var(--accent-mid)",
-              background: "var(--accent-light)",
-              color: "var(--accent)",
-              fontSize: "0.75rem",
-              fontWeight: 600,
-              cursor: "pointer",
-              transition: "all 0.15s",
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--accent)"; (e.currentTarget as HTMLButtonElement).style.color = "#fff"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-light)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--accent)"; }}
-          >
-            <Plus className="w-3.5 h-3.5" />
-            New session
-          </button>
+      {/* ── Navigation ── */}
+      <nav style={{
+        position: "relative", zIndex: 50, flexShrink: 0,
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "16px 48px",
+        borderBottom: "1px solid rgba(255,255,255,0.1)",
+        background: "rgba(255,255,255,0.04)",
+        backdropFilter: "blur(20px)",
+      }}>
+        <div
+          onClick={() => router.push('/')}
+          style={{
+            fontFamily: "Sora,sans-serif", fontSize: "18px", fontWeight: 700,
+            color: "#fff", letterSpacing: "-0.02em", textTransform: "uppercase",
+            cursor: "pointer",
+          }}
+        >
+          Trace
         </div>
 
-        {/* Session list */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "0.5rem" }}>
-          {sessions.length === 0 && (
-            <p style={{ fontSize: "0.7rem", color: "var(--text-subtle)", padding: "0.75rem 0.5rem", fontFamily: "monospace" }}>
-              No sessions yet.
-            </p>
-          )}
-          {[...sessions].reverse().map((s) => (
-            <button
-              key={s.id}
-              onClick={() => setActiveId(s.id)}
+        <div style={{ display: "flex", alignItems: "center", gap: "32px" }}>
+          {(["Nebula", "Mirror", "Void", "Pulse"] as const).map((item, i) => (
+            <a
+              key={item}
+              href={i === 0 ? "/" : "#"}
+              onClick={i === 0 ? (e) => { e.preventDefault(); router.push("/"); } : undefined}
               style={{
-                display: "flex", alignItems: "center", gap: "0.5rem",
-                width: "100%", padding: "0.6rem 0.75rem",
-                borderRadius: "10px", border: "none", cursor: "pointer",
-                background: s.id === activeId ? "var(--accent-light)" : "none",
-                color: s.id === activeId ? "var(--accent)" : "var(--text-muted)",
-                fontSize: "0.75rem", textAlign: "left",
-                transition: "all 0.15s",
-                borderLeft: `2px solid ${s.id === activeId ? "var(--accent)" : "transparent"}`,
+                fontFamily: "Geist,sans-serif", fontSize: "14px",
+                color: i === 0 ? "#fff" : "rgba(196,199,200,0.45)",
+                textDecoration: "none",
+                borderBottom: i === 0 ? "1px solid #fff" : "none",
+                paddingBottom: i === 0 ? "2px" : 0,
+                transition: "color 0.2s",
               }}
+              onMouseEnter={e => { if (i !== 0) (e.target as HTMLAnchorElement).style.color = "#fff"; }}
+              onMouseLeave={e => { if (i !== 0) (e.target as HTMLAnchorElement).style.color = "rgba(196,199,200,0.45)"; }}
             >
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-                {s.title}
-              </span>
-              {s.messages.length > 0 && (
-                <span style={{ fontSize: "0.6rem", opacity: 0.5, flexShrink: 0 }}>
-                  {s.messages.length}
-                </span>
-              )}
-            </button>
+              {item}
+            </a>
           ))}
         </div>
 
-        {/* Sidebar footer */}
-        <div style={{ padding: "0.75rem 1rem", borderTop: "1px solid var(--border)" }}>
-          <p style={{ fontSize: "0.65rem", color: "var(--text-subtle)", fontFamily: "monospace" }}>
-            Trace AI · v1.0
-          </p>
+        <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
+          <span style={{
+            fontFamily: "JetBrains Mono,monospace", fontSize: "9px",
+            color: "rgba(196,199,200,0.3)", letterSpacing: "0.2em",
+          }}>
+            SESSION: V_ALPHA_9
+          </span>
+          <button
+            onClick={handleReset}
+            style={{
+              padding: "10px 24px", background: "#fff", border: "none",
+              color: "#1a1a1a", fontFamily: "Geist,sans-serif", fontSize: "11px",
+              fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase",
+              cursor: "pointer", transition: "box-shadow 0.2s",
+            }}
+            onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 0 20px rgba(255,255,255,0.35)"}
+            onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.boxShadow = "none"}
+          >
+            Sync Mirror
+          </button>
         </div>
-      </aside>
+      </nav>
 
-      {/* ── Main area ────────────────────────────────────────────────── */}
-      <main style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        overflow: "hidden",
-        background: "var(--bg)",
-      }}>
-        {/* Top bar */}
-        <div style={{
-          padding: "0.875rem 1.5rem",
-          borderBottom: "1px solid var(--border)",
-          display: "flex",
-          alignItems: "center",
-          gap: "0.75rem",
-          background: "var(--surface)",
-          flexShrink: 0,
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flex: 1 }}>
-            <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text)" }}>
-              {active?.title ?? "New session"}
-            </span>
-            {active?.file && (
-              <span style={{
-                display: "inline-flex", alignItems: "center", gap: "0.3rem",
-                padding: "2px 10px", borderRadius: "9999px",
-                border: "1px solid var(--accent-mid)",
-                background: "var(--accent-light)", color: "var(--accent)",
-                fontSize: "0.65rem", fontFamily: "monospace",
-              }}>
-                <ImageIcon className="w-2.5 h-2.5" />
-                {active.file.name.slice(0, 28)}{active.file.name.length > 28 ? "…" : ""}
-              </span>
-            )}
-          </div>
-          {active && active.messages.length > 0 && (
-            <button
-              onClick={() => { updateSession(active.id, { messages: [], title: "New session", file: null }); setError(null); }}
-              style={{ display: "flex", alignItems: "center", gap: "0.25rem", background: "none", border: "none", cursor: "pointer", color: "var(--text-subtle)", fontSize: "0.7rem" }}
-            >
-              <RotateCcw className="w-3 h-3" /> Clear
-            </button>
-          )}
-          <ThemeToggle />
-        </div>
-
-        {/* Messages */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "2rem 2.5rem", display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-          {(!active || active.messages.length === 0) && (
-            <div style={{ margin: "auto", textAlign: "center", maxWidth: "28rem", display: "flex", flexDirection: "column", alignItems: "center", gap: "1rem" }}>
-              <div style={{ width: "3rem", height: "3rem", borderRadius: "14px", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--accent-light)", border: "1px solid var(--accent-mid)" }}>
-                <Terminal className="w-5 h-5" style={{ color: "var(--accent)" }} />
-              </div>
-              <p style={{ fontSize: "1.1rem", fontWeight: 600, color: "var(--text)" }}>Start a conversation</p>
-              <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", lineHeight: 1.7 }}>
-                Upload a diagram and ask Trace anything about it — architecture questions, code generation, relationship mapping.
-              </p>
-            </div>
-          )}
-
-          <AnimatePresence initial={false}>
-            {active?.messages.map((msg, idx) => (
-              <motion.div key={idx}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3, ease: "easeOut" }}
-                style={{
-                  display: "flex",
-                  gap: "0.625rem",
-                  justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
-                  marginBottom: "0.5rem",
-                }}
-              >
-                {/* ── AI message ── */}
-                {msg.role === "assistant" && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem", maxWidth: "80%" }}>
-                    {/* Avatar chip label */}
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.375rem", marginBottom: "0.25rem" }}>
-                      <div style={{
-                        width: "1.25rem", height: "1.25rem", borderRadius: "50%", flexShrink: 0,
-                        background: "linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                      }}>
-                        <Bot className="w-2.5 h-2.5" style={{ color: "#fff" }} />
-                      </div>
-                      <span style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--text-muted)", opacity: 0.6, fontFamily: "'Inter', sans-serif" }}>
-                        Trace AI
-                      </span>
-                    </div>
-
-                    {/* Left-border text — no bubble */}
-                    <div style={{
-                      paddingLeft: "1rem",
-                      borderLeft: "2px solid #7c3aed",
-                      color: "var(--text)",
-                      fontSize: "0.9rem",
-                      lineHeight: 1.8,
-                      fontFamily: "'Inter', sans-serif",
-                    }}>
-                      {renderReply(msg.content)}
-                    </div>
-
-                    {msg.traceResult && (
-                      <div style={{ paddingLeft: "1rem" }}>
-                        <TraceResultPanel result={msg.traceResult} />
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* ── User message ── */}
-                {msg.role === "user" && (
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.25rem", maxWidth: "70%" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.375rem", marginBottom: "0.125rem" }}>
-                      <span style={{ fontSize: "0.72rem", fontWeight: 500, color: "var(--text-muted)", opacity: 0.55, fontFamily: "'Inter', sans-serif" }}>
-                        You
-                      </span>
-                      <div style={{
-                        width: "1.25rem", height: "1.25rem", borderRadius: "50%", flexShrink: 0,
-                        background: "var(--accent-light)", border: "1px solid var(--accent-mid)",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                      }}>
-                        <User className="w-2.5 h-2.5" style={{ color: "var(--accent)" }} />
-                      </div>
-                    </div>
-                    {/* Pill bubble */}
-                    <div style={{
-                      padding: "0.625rem 1.125rem",
-                      borderTopLeftRadius: "18px",
-                      borderBottomLeftRadius: "18px",
-                      borderBottomRightRadius: "18px",
-                      borderTopRightRadius: "4px",
-                      background: "var(--bubble-user)",
-                      border: "1px solid var(--bubble-user-border)",
-                      color: "var(--text)",
-                      fontSize: "0.9rem",
-                      fontFamily: "'Inter', sans-serif",
-                      lineHeight: 1.6,
-                    }}>
-                      {msg.content}
-                    </div>
-                  </div>
-                )}
-              </motion.div>
-            ))}
-          </AnimatePresence>
-
-          {loading && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-              {/* Avatar chip */}
-              <div style={{ display: "flex", alignItems: "center", gap: "0.375rem", marginBottom: "0.25rem" }}>
-                <div style={{
-                  width: "1.25rem", height: "1.25rem", borderRadius: "50%",
-                  background: "linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)",
-                  display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-                }}>
-                  <Bot className="w-2.5 h-2.5" style={{ color: "#fff" }} />
-                </div>
-                <span style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--text-muted)", opacity: 0.6, fontFamily: "'Inter', sans-serif" }}>Trace AI</span>
-              </div>
-              {/* Thinking dots */}
-              <div style={{ paddingLeft: "1rem", borderLeft: "2px solid #7c3aed", display: "flex", gap: "0.375rem", alignItems: "center", height: "1.5rem" }}>
-                {[0, 1, 2].map((i) => (
-                  <motion.div key={i}
-                    style={{ width: "0.375rem", height: "0.375rem", borderRadius: "50%", background: "var(--accent)" }}
-                    animate={{ opacity: [0.3, 1, 0.3] }}
-                    transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
-                  />
-                ))}
-              </div>
-            </motion.div>
-          )}
-          <div ref={bottomRef} />
-        </div>
-
-        {/* ── Input bar ─────────────────────────────────────────────── */}
-        <div style={{ flexShrink: 0, borderTop: "1px solid var(--border)", padding: "1rem 2rem 1.5rem", background: "var(--surface)" }}>
-          {/* File badge */}
-          {active?.file ? (
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: "0.375rem", padding: "3px 12px", borderRadius: "9999px", border: "1px solid var(--accent-mid)", background: "var(--accent-light)", color: "var(--accent)", fontSize: "0.7rem", fontFamily: "monospace" }}>
-                <ImageIcon className="w-3 h-3" />
-                {active.file.name.slice(0, 40)}
-                <button type="button" onClick={() => updateSession(active.id, { file: null })}
-                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--accent)", display: "flex", marginLeft: "0.25rem" }}>
-                  <X className="w-3 h-3" />
-                </button>
-              </span>
-            </div>
-          ) : (
-            <div
-              onClick={() => fileRef.current?.click()}
-              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={(e) => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); }}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem",
-                padding: "0.625rem 1rem", borderRadius: "10px", cursor: "pointer", marginBottom: "0.75rem",
-                border: `2px dashed ${dragging ? "var(--accent)" : "var(--border)"}`,
-                background: dragging ? "var(--accent-light)" : "var(--surface-raised)",
-                fontSize: "0.8rem", color: "var(--text-muted)",
-                transition: "all 0.2s",
-              }}
-            >
-              <Upload className="w-4 h-4" style={{ color: "var(--text-subtle)" }} />
-              <span>Drop a diagram or <span style={{ color: "var(--accent)" }}>browse</span></span>
-            </div>
-          )}
-          <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }}
-            onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }} />
-
-          {/* Query form */}
-          <form onSubmit={handleSubmit} style={{ display: "flex", gap: "0.75rem" }}>
-            <input
-              ref={inputRef}
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Ask about your diagram…"
-              style={{
-                flex: 1, height: "3rem", padding: "0 1.25rem",
-                borderRadius: "14px",
-                border: "1.5px solid var(--border)",
-                background: "var(--surface-raised)",
-                color: "var(--text)",
-                fontSize: "0.9rem",
-                fontFamily: "'Inter', sans-serif",
-                outline: "none",
-                transition: "border-color 0.2s, box-shadow 0.2s",
-              }}
-              onFocus={(e) => {
-                e.currentTarget.style.borderColor = "var(--accent)";
-                e.currentTarget.style.boxShadow = "0 0 0 3px var(--accent-light)";
-              }}
-              onBlur={(e) => {
-                e.currentTarget.style.borderColor = "var(--border)";
-                e.currentTarget.style.boxShadow = "none";
-              }}
-            />
-            <motion.button
-              type="submit"
-              disabled={loading}
-              whileHover={{ scale: 1.04 }}
-              whileTap={{ scale: 0.96 }}
-              style={{
-                height: "3rem", padding: "0 1.5rem", borderRadius: "14px",
-                background: "var(--accent)", color: "#fff", border: "none", cursor: "pointer",
-                display: "inline-flex", alignItems: "center", gap: "0.5rem",
-                fontWeight: 600, fontSize: "0.875rem", flexShrink: 0,
-                boxShadow: "0 4px 14px rgba(124,58,237,0.3)",
-                opacity: loading ? 0.6 : 1,
-              }}>
-              {loading
-                ? <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                    style={{ width: "1rem", height: "1rem", borderRadius: "50%", border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff" }} />
-                : <Send className="w-4 h-4" />}
-              <span style={{ whiteSpace: "nowrap" }}>{loading ? "Tracing…" : "Send"}</span>
-            </motion.button>
-          </form>
-
-          {error && (
-            <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-              style={{ marginTop: "0.5rem", fontSize: "0.75rem", color: "#ef4444", fontFamily: "monospace" }}>
-              ✗ {error}
-            </motion.p>
-          )}
-        </div>
-      </main>
-    </motion.div>
+      {/* ── Split pane ── */}
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        <NebulaCanvas
+          nodes={nodes}
+          edges={edges}
+          onNodeClick={handleNodeClick}
+          onExportCode={handleExportCode}
+          onInitialize={handleInitialize}
+        />
+        <ChatSidebar
+          messages={messages} loading={loading} error={error} file={file}
+          onSubmit={handleSubmit} onFileChange={handleFileChange}
+          onFileRemove={() => setFile(null)}
+          onReset={handleReset}
+          query={query} setQuery={setQuery}
+        />
+      </div>
+    </div>
   );
 }

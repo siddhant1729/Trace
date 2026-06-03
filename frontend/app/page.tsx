@@ -1,29 +1,29 @@
-"use client";
-
-import MeshBackground from "@/components/MeshBackground";
-import HeroSection from "@/components/HeroSection";
-import FeatureCards from "@/components/FeatureCards";
-import Footer from "@/components/Footer";
-import ThemeToggle from "@/components/ThemeToggle";
+import StarField from '@/components/StarField';
+import CosmicNav from '@/components/CosmicNav';
+import HeroSection from '@/components/HeroSection';
+import BentoPreview from '@/components/BentoPreview';
+import FeaturesSection from '@/components/FeaturesSection';
+import CtaSection from '@/components/CtaSection';
+import CosmicFooter from '@/components/CosmicFooter';
 
 export default function Home() {
   return (
-    <main
-      className="relative min-h-screen overflow-hidden"
-      style={{ background: "var(--bg)" }}
-    >
-      {/* Theme toggle — fixed top-right */}
-      <ThemeToggle />
+    <>
+      {/* Fixed starfield — Base Layer */}
+      <StarField />
 
-      {/* Animated mesh gradient background (dark mode only — transparent in light) */}
-      <MeshBackground />
+      {/* Navigation — Fixed top */}
+      <CosmicNav />
 
-      {/* Main content */}
-      <div className="relative z-10">
+      {/* Main content — stacked above starfield */}
+      <main className="relative">
         <HeroSection />
-        <FeatureCards />
-        <Footer />
-      </div>
-    </main>
+        <BentoPreview />
+        <FeaturesSection />
+        <CtaSection />
+      </main>
+
+      <CosmicFooter />
+    </>
   );
 }

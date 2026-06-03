@@ -1,28 +1,36 @@
 import type { Metadata } from "next";
-import { Inter, Geist } from "next/font/google";
+import { Sora, Geist, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({
+const sora = Sora({
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700", "800", "900"],
-  variable: "--font-inter",
+  weight: ["400", "600", "700"],
+  variable: "--font-sora",
   display: "swap",
 });
 
 const geist = Geist({
   subsets: ["latin"],
+  weight: ["400", "600"],
   variable: "--font-geist",
   display: "swap",
 });
 
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["400", "600"],
+  variable: "--font-jetbrains",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
-  title: "Trace – Turn Diagrams into Reality",
+  title: "Trace | Into the Void — Diagrams to Reality",
   description:
-    "Trace transforms your diagrams and sketches into working code and real implementations instantly. The AI-powered diagramming tool for builders.",
-  keywords: ["AI", "diagrams", "code generation", "developer tools", "Trace"],
+    "Trace transforms your architectural diagrams into executable logic with a cinematic workspace designed for elite developers. Neural mapping meets glassmorphism.",
+  keywords: ["AI", "diagrams", "developer tools", "Trace", "architecture", "node mapping"],
   openGraph: {
-    title: "Trace – Turn Diagrams into Reality",
-    description: "Transform diagrams into working code instantly with AI.",
+    title: "Trace — Diagrams to Reality",
+    description: "A cinematic workspace for architects of digital systems.",
     type: "website",
   },
 };
@@ -33,26 +41,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${geist.variable}`} suppressHydrationWarning>
-      <head>
-        {/* Inline script: read localStorage BEFORE first paint to avoid theme flash */}
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              (function() {
-                try {
-                  var stored = localStorage.getItem('trace-theme');
-                  if (stored === 'dark') {
-                    document.documentElement.classList.add('dark');
-                  }
-                  // default = light (no class needed)
-                } catch(e) {}
-              })();
-            `,
-          }}
-        />
-      </head>
-      <body className={`antialiased noise-overlay ${inter.className}`}>
+    <html
+      lang="en"
+      className={`${sora.variable} ${geist.variable} ${jetbrainsMono.variable}`}
+      suppressHydrationWarning
+    >
+      <head />
+      <body className="antialiased" style={{ background: '#000', color: '#e2e2e2' }}>
         {children}
       </body>
     </html>
