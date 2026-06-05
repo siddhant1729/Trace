@@ -1,5 +1,5 @@
 'use client';
-import React from 'react';
+import React, { useRef, useCallback, useState } from 'react';
 
 const glassStyle: React.CSSProperties = {
   background: 'rgba(255, 255, 255, 0.02)',
@@ -7,6 +7,84 @@ const glassStyle: React.CSSProperties = {
   border: '1px solid rgba(255, 255, 255, 0.1)',
   position: 'relative',
 };
+
+/** Reusable glass card with spotlight + tilt */
+function SpotlightCard({
+  children,
+  className = '',
+  style = {},
+}: {
+  children: React.ReactNode;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const spotRef = useRef<HTMLDivElement>(null);
+  const [hovered, setHovered] = useState(false);
+
+  const onMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const el = ref.current;
+    const spot = spotRef.current;
+    if (!el || !spot) return;
+    const rect = el.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const cx = x / rect.width;
+    const cy = y / rect.height;
+
+    spot.style.background = `radial-gradient(500px circle at ${x}px ${y}px, rgba(255,255,255,0.06), transparent 50%)`;
+    spot.style.opacity = '1';
+
+    const tiltX = (cy - 0.5) * -4;
+    const tiltY = (cx - 0.5) * 4;
+    el.style.transform = `perspective(900px) rotateX(${tiltX}deg) rotateY(${tiltY}deg) scale(1.005)`;
+  }, []);
+
+  const onLeave = useCallback(() => {
+    const el = ref.current;
+    const spot = spotRef.current;
+    if (el) el.style.transform = 'perspective(900px) rotateX(0deg) rotateY(0deg) scale(1)';
+    if (spot) spot.style.opacity = '0';
+    setHovered(false);
+  }, []);
+
+  return (
+    <div
+      ref={ref}
+      className={className}
+      onMouseEnter={() => setHovered(true)}
+      onMouseMove={onMove}
+      onMouseLeave={onLeave}
+      style={{
+        ...glassStyle,
+        ...style,
+        borderRadius: '0.75rem',
+        overflow: 'hidden',
+        transition: 'box-shadow 0.4s ease, border-color 0.4s ease, transform 0.3s cubic-bezier(0.23,1,0.32,1)',
+        borderColor: hovered ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)',
+        boxShadow: hovered ? '0 0 30px rgba(255,255,255,0.07)' : 'none',
+        transformStyle: 'preserve-3d',
+        willChange: 'transform',
+      }}
+    >
+      {/* Spotlight overlay */}
+      <div
+        ref={spotRef}
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          borderRadius: 'inherit',
+          pointerEvents: 'none',
+          zIndex: 2,
+          opacity: 0,
+          transition: 'opacity 0.4s ease',
+        }}
+      />
+      {children}
+    </div>
+  );
+}
 
 function CanvasMockup() {
   return (
@@ -52,6 +130,7 @@ function CanvasMockup() {
 }
 
 function InspectorMockup() {
+  const [hoveredRow, setHoveredRow] = useState<number | null>(null);
   const rows = [
     { label: 'NODE', value: 'api.gateway' },
     { label: 'TYPE', value: 'service' },
@@ -61,15 +140,24 @@ function InspectorMockup() {
     { label: 'REQUESTS', value: '8.2k / min' },
   ];
   return (
-    <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '12px', padding: '28px 28px' }}>
+    <div style={{ fontFamily: 'Fira Code, monospace', fontSize: '12px', padding: '28px 28px' }}>
       {rows.map((r, i) => (
         <div
           key={r.label}
           className="flex justify-between items-center"
-          style={{ padding: '14px 0', borderBottom: i < rows.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}
+          onMouseEnter={() => setHoveredRow(i)}
+          onMouseLeave={() => setHoveredRow(null)}
+          style={{
+            padding: '14px 8px',
+            borderBottom: i < rows.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+            background: hoveredRow === i ? 'rgba(255,255,255,0.03)' : 'transparent',
+            borderRadius: '4px',
+            transition: 'background 0.2s ease',
+            cursor: 'default',
+          }}
         >
-          <span style={{ color: 'rgba(255,255,255,0.28)', letterSpacing: '0.1em', fontSize: '10px' }}>{r.label}</span>
-          <span style={{ color: r.label === 'STATUS' ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.6)' }}>{r.value}</span>
+          <span style={{ color: hoveredRow === i ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.28)', letterSpacing: '0.1em', fontSize: '10px', transition: 'color 0.2s ease' }}>{r.label}</span>
+          <span style={{ color: r.label === 'STATUS' ? 'rgba(255,255,255,0.9)' : hoveredRow === i ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.6)', transition: 'color 0.2s ease' }}>{r.value}</span>
         </div>
       ))}
     </div>
@@ -81,7 +169,7 @@ export default function BentoPreview() {
     <section id="mirror" className="relative z-10 max-w-[1440px] mx-auto" style={{ padding: '0 48px 140px' }}>
       {/* Section label */}
       <div className="flex items-center gap-6" style={{ marginBottom: '40px' }}>
-        <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '10px', color: 'rgba(255,255,255,0.2)', letterSpacing: '0.25em', textTransform: 'uppercase' }}>
+        <span style={{ fontFamily: 'Fira Code, monospace', fontSize: '10px', color: 'rgba(255,255,255,0.2)', letterSpacing: '0.25em', textTransform: 'uppercase' }}>
           [Preview Interface]
         </span>
         <div style={{ height: '1px', flexGrow: 1, background: 'rgba(255,255,255,0.05)' }} />
@@ -89,14 +177,9 @@ export default function BentoPreview() {
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
         {/* Main Canvas — 8 cols */}
-        <div
-          className="md:col-span-8 overflow-hidden"
-          style={{ ...glassStyle, borderRadius: '0.75rem', transition: 'box-shadow 0.3s, border-color 0.3s' }}
-          onMouseEnter={(e) => { const el = e.currentTarget as HTMLDivElement; el.style.boxShadow = '0 0 24px rgba(255,255,255,0.07)'; el.style.borderColor = 'rgba(255,255,255,0.2)'; }}
-          onMouseLeave={(e) => { const el = e.currentTarget as HTMLDivElement; el.style.boxShadow = 'none'; el.style.borderColor = 'rgba(255,255,255,0.1)'; }}
-        >
-          <div className="flex justify-between items-center" style={{ padding: '20px 28px', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
-            <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '10px', color: 'rgba(255,255,255,0.28)', letterSpacing: '0.2em', textTransform: 'uppercase' }}>
+        <SpotlightCard className="md:col-span-8">
+          <div className="flex justify-between items-center" style={{ padding: '20px 28px', borderBottom: '1px solid rgba(255,255,255,0.07)', position: 'relative', zIndex: 3 }}>
+            <span style={{ fontFamily: 'Fira Code, monospace', fontSize: '10px', color: 'rgba(255,255,255,0.28)', letterSpacing: '0.2em', textTransform: 'uppercase' }}>
               Main Canvas
             </span>
             <svg className="opacity-20" width="16" height="16" fill="none" stroke="white" strokeWidth="1.5" viewBox="0 0 24 24">
@@ -106,32 +189,27 @@ export default function BentoPreview() {
           <div style={{ maskImage: 'linear-gradient(to bottom, black 78%, transparent 100%)' }}>
             <CanvasMockup />
           </div>
-        </div>
+        </SpotlightCard>
 
         {/* Logic Inspector — 4 cols */}
-        <div
-          className="md:col-span-4 flex flex-col overflow-hidden"
-          style={{ ...glassStyle, borderRadius: '0.75rem', transition: 'box-shadow 0.3s, border-color 0.3s' }}
-          onMouseEnter={(e) => { const el = e.currentTarget as HTMLDivElement; el.style.boxShadow = '0 0 24px rgba(255,255,255,0.07)'; el.style.borderColor = 'rgba(255,255,255,0.2)'; }}
-          onMouseLeave={(e) => { const el = e.currentTarget as HTMLDivElement; el.style.boxShadow = 'none'; el.style.borderColor = 'rgba(255,255,255,0.1)'; }}
-        >
-          <div style={{ padding: '20px 28px', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
-            <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '10px', color: 'rgba(255,255,255,0.28)', letterSpacing: '0.2em', textTransform: 'uppercase' }}>
+        <SpotlightCard className="md:col-span-4" style={{ display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '20px 28px', borderBottom: '1px solid rgba(255,255,255,0.07)', position: 'relative', zIndex: 3 }}>
+            <span style={{ fontFamily: 'Fira Code, monospace', fontSize: '10px', color: 'rgba(255,255,255,0.28)', letterSpacing: '0.2em', textTransform: 'uppercase' }}>
               Logic Inspector
             </span>
           </div>
-          <div className="flex-grow" style={{ background: 'rgba(0,0,0,0.25)' }}>
+          <div className="flex-grow" style={{ background: 'rgba(0,0,0,0.25)', position: 'relative', zIndex: 3 }}>
             <InspectorMockup />
           </div>
-          <div style={{ padding: '28px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
-            <h3 style={{ fontFamily: 'Sora, sans-serif', fontSize: '20px', fontWeight: 600, color: 'white', marginBottom: '10px', lineHeight: '1.3' }}>
+          <div style={{ padding: '28px', borderTop: '1px solid rgba(255,255,255,0.07)', position: 'relative', zIndex: 3 }}>
+            <h3 style={{ fontFamily: 'Space Grotesk, sans-serif', fontSize: '20px', fontWeight: 600, color: 'white', marginBottom: '10px', lineHeight: '1.3' }}>
               Infinite Depth
             </h3>
-            <p style={{ fontFamily: 'Geist, sans-serif', fontSize: '14px', color: 'rgba(196,199,200,0.5)', lineHeight: '1.7' }}>
+            <p style={{ fontFamily: 'Plus Jakarta Sans, sans-serif', fontSize: '14px', color: 'rgba(196,199,200,0.5)', lineHeight: '1.7' }}>
               Drill down into any node to see the underlying cosmic structure of your project.
             </p>
           </div>
-        </div>
+        </SpotlightCard>
       </div>
     </section>
   );

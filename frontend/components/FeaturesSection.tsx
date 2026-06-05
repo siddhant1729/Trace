@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 
 const FEATURES = [
   {
@@ -45,6 +45,7 @@ function FeatureCard({ feature, index }: { feature: typeof FEATURES[0]; index: n
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const spotlightRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = ref.current;
@@ -57,11 +58,41 @@ function FeatureCard({ feature, index }: { feature: typeof FEATURES[0]; index: n
     return () => observer.disconnect();
   }, []);
 
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const el = ref.current;
+    const spot = spotlightRef.current;
+    if (!el || !spot) return;
+
+    const rect = el.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const cx = x / rect.width;
+    const cy = y / rect.height;
+
+    // Spotlight
+    spot.style.background = `radial-gradient(500px circle at ${x}px ${y}px, rgba(255,255,255,0.07), transparent 50%)`;
+    spot.style.opacity = '1';
+
+    // 3D tilt
+    const tiltX = (cy - 0.5) * -6;
+    const tiltY = (cx - 0.5) * 6;
+    el.style.transform = `perspective(800px) rotateX(${tiltX}deg) rotateY(${tiltY}deg) scale(1.02)`;
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    const el = ref.current;
+    const spot = spotlightRef.current;
+    if (el) el.style.transform = 'perspective(800px) rotateX(0deg) rotateY(0deg) scale(1)';
+    if (spot) spot.style.opacity = '0';
+    setHovered(false);
+  }, []);
+
   return (
     <div
       ref={ref}
       onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
       style={{
         background: 'rgba(255, 255, 255, 0.02)',
         backdropFilter: 'blur(20px)',
@@ -69,41 +100,58 @@ function FeatureCard({ feature, index }: { feature: typeof FEATURES[0]; index: n
         borderRadius: '0.75rem',
         padding: '52px 44px 44px',
         position: 'relative',
-        transition: 'all 0.4s ease',
+        overflow: 'hidden',
+        transition: 'border-color 0.4s ease, box-shadow 0.4s ease, transform 0.3s cubic-bezier(0.23, 1, 0.32, 1)',
         boxShadow: hovered ? '0 0 28px rgba(255,255,255,0.07)' : 'none',
         maskImage: 'linear-gradient(to bottom, black 72%, transparent 100%)',
         opacity: visible ? 1 : 0,
-        transform: visible ? 'translateY(0)' : 'translateY(40px)',
-        transitionDelay: `${index * 0.14}s`,
+        transformStyle: 'preserve-3d',
+        willChange: 'transform',
+        transitionDelay: visible ? '0s' : `${index * 0.14}s`,
       }}
     >
+      {/* Cursor spotlight overlay */}
+      <div
+        ref={spotlightRef}
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          borderRadius: 'inherit',
+          pointerEvents: 'none',
+          zIndex: 1,
+          opacity: 0,
+          transition: 'opacity 0.4s ease',
+        }}
+      />
+
       {/* Specular highlight */}
-      <div style={{ position: 'absolute', top: 0, left: 0, width: '50px', height: '1px', background: 'rgba(255,255,255,0.55)', borderTopLeftRadius: '0.75rem' }} />
+      <div style={{ position: 'absolute', top: 0, left: 0, width: '50px', height: '1px', background: hovered ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.55)', borderTopLeftRadius: '0.75rem', transition: 'background 0.3s ease, width 0.4s ease', ...(hovered ? { width: '100px' } : {}) }} />
 
       {/* Icon */}
       <div
         className="text-white"
-        style={{ marginBottom: '36px', transform: hovered ? 'scale(1.12)' : 'scale(1)', transition: 'transform 0.3s ease' }}
+        style={{ marginBottom: '36px', transform: hovered ? 'scale(1.12) translateY(-4px)' : 'scale(1) translateY(0)', transition: 'transform 0.4s cubic-bezier(0.23, 1, 0.32, 1)', filter: hovered ? 'drop-shadow(0 0 12px rgba(255,255,255,0.4))' : 'none' }}
       >
         {feature.icon}
       </div>
 
       {/* Content */}
-      <div style={{ marginBottom: '48px' }}>
-        <h3 style={{ fontFamily: 'Sora, sans-serif', fontSize: '22px', fontWeight: 600, color: 'white', marginBottom: '16px', lineHeight: '1.3' }}>
+      <div style={{ marginBottom: '48px', position: 'relative', zIndex: 2 }}>
+        <h3 style={{ fontFamily: 'Space Grotesk, sans-serif', fontSize: '22px', fontWeight: 600, color: 'white', marginBottom: '16px', lineHeight: '1.3' }}>
           {feature.title}
         </h3>
-        <p style={{ fontFamily: 'Geist, sans-serif', fontSize: '15px', color: 'rgba(196,199,200,0.6)', lineHeight: '1.75' }}>
+        <p style={{ fontFamily: 'Plus Jakarta Sans, sans-serif', fontSize: '15px', color: hovered ? 'rgba(196,199,200,0.8)' : 'rgba(196,199,200,0.6)', lineHeight: '1.75', transition: 'color 0.3s ease' }}>
           {feature.description}
         </p>
       </div>
 
       {/* Number rule */}
-      <div className="flex items-center gap-4">
-        <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '13px', color: 'rgba(255,255,255,0.7)' }}>
+      <div className="flex items-center gap-4" style={{ position: 'relative', zIndex: 2 }}>
+        <span style={{ fontFamily: 'Fira Code, monospace', fontSize: '13px', color: hovered ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.7)', transition: 'color 0.3s ease', textShadow: hovered ? '0 0 20px rgba(255,255,255,0.5)' : 'none' }}>
           {feature.number}
         </span>
-        <div style={{ height: '1px', flexGrow: 1, background: 'rgba(255,255,255,0.07)' }} />
+        <div style={{ height: '1px', flexGrow: 1, background: hovered ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.07)', transition: 'background 0.3s ease' }} />
       </div>
     </div>
   );
@@ -116,16 +164,16 @@ export default function FeaturesSection() {
         {/* Section header */}
         <div className="flex flex-col md:flex-row justify-between items-end" style={{ marginBottom: '80px', gap: '32px' }}>
           <div style={{ maxWidth: '600px' }}>
-            <h2 style={{ fontFamily: 'Sora, sans-serif', fontSize: 'clamp(36px, 5vw, 60px)', fontWeight: 700, color: 'white', lineHeight: '1.1', letterSpacing: '-0.03em', marginBottom: '24px' }}>
+            <h2 style={{ fontFamily: 'Space Grotesk, sans-serif', fontSize: 'clamp(36px, 5vw, 60px)', fontWeight: 700, color: 'white', lineHeight: '1.1', letterSpacing: '-0.03em', marginBottom: '24px' }}>
               Designed for the{' '}
               <span style={{ color: 'rgba(255,255,255,0.22)' }}>Focused</span>
             </h2>
-            <p style={{ fontFamily: 'Geist, sans-serif', fontSize: '16px', color: 'rgba(196,199,200,0.6)', lineHeight: '1.75' }}>
+            <p style={{ fontFamily: 'Plus Jakarta Sans, sans-serif', fontSize: '16px', color: 'rgba(196,199,200,0.6)', lineHeight: '1.75' }}>
               A workspace that respects your attention. No clutter, only clarity. Built on the principles of
               minimalism and high-performance engineering.
             </p>
           </div>
-          <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '10px', color: 'rgba(255,255,255,0.18)', letterSpacing: '0.3em', textTransform: 'uppercase', paddingBottom: '6px' }}>
+          <div style={{ fontFamily: 'Fira Code, monospace', fontSize: '10px', color: 'rgba(255,255,255,0.18)', letterSpacing: '0.3em', textTransform: 'uppercase', paddingBottom: '6px' }}>
             [Core Modules]
           </div>
         </div>

@@ -54,7 +54,7 @@ function renderReply(text: string): React.ReactNode[] {
             borderRadius: "4px 4px 0 0",
             fontSize: "10px",
             color: "rgba(255,255,255,0.3)",
-            fontFamily: "JetBrains Mono,monospace",
+            fontFamily: 'Fira Code, monospace',
           }}>
             <span>{lang}</span>
             <button
@@ -70,7 +70,7 @@ function renderReply(text: string): React.ReactNode[] {
             border: "1px solid rgba(255,255,255,0.08)",
             borderRadius: "0 0 4px 4px",
             overflow: "auto", fontSize: "12px",
-            fontFamily: "JetBrains Mono,monospace",
+            fontFamily: 'Fira Code, monospace',
             color: "rgba(196,199,200,0.9)",
             whiteSpace: "pre-wrap", lineHeight: 1.6,
           }}>
@@ -220,7 +220,7 @@ function NebulaCanvas({
             <ZoomIn size={14} />
           </button>
           <div style={{ height: "1px", background: "rgba(255,255,255,0.08)", margin: "0 6px" }} />
-          <div style={{ padding: "6px 10px", fontFamily: "JetBrains Mono,monospace", fontSize: "9px", color: "rgba(255,255,255,0.35)", textAlign: "center", letterSpacing: "0.06em" }}>
+          <div style={{ padding: "6px 10px", fontFamily: 'Fira Code, monospace', fontSize: "9px", color: "rgba(255,255,255,0.35)", textAlign: "center", letterSpacing: "0.06em" }}>
             {zoom}%
           </div>
           <div style={{ height: "1px", background: "rgba(255,255,255,0.08)", margin: "0 6px" }} />
@@ -240,7 +240,7 @@ function NebulaCanvas({
             background: "rgba(42,42,42,0.9)",
             border: "1px solid rgba(255,255,255,0.1)",
             color: "rgba(226,226,226,0.7)",
-            fontSize: "11px", fontFamily: "Geist,sans-serif", fontWeight: 600,
+            fontSize: "11px", fontFamily: 'Plus Jakarta Sans, sans-serif', fontWeight: 600,
             letterSpacing: "0.1em", textTransform: "uppercase",
             cursor: "pointer", backdropFilter: "blur(10px)", transition: "all 0.2s",
           }}
@@ -255,7 +255,7 @@ function NebulaCanvas({
             display: "flex", alignItems: "center", gap: "8px",
             padding: "10px 20px",
             background: "#fff", border: "none", color: "#1a1a1a",
-            fontSize: "11px", fontFamily: "Geist,sans-serif", fontWeight: 600,
+            fontSize: "11px", fontFamily: 'Plus Jakarta Sans, sans-serif', fontWeight: 600,
             letterSpacing: "0.1em", textTransform: "uppercase",
             cursor: "pointer", transition: "all 0.2s",
           }}
@@ -283,10 +283,10 @@ function NebulaCanvas({
             <path d="M18 22v8M46 22v8M18 42V30M46 42V30M18 30h28" strokeDasharray="3 3" />
           </svg>
           <div style={{ textAlign: "center" }}>
-            <div style={{ fontFamily: "Sora,sans-serif", fontSize: "15px", color: "rgba(255,255,255,0.2)", fontWeight: 600, marginBottom: "8px" }}>
+            <div style={{ fontFamily: 'Space Grotesk, sans-serif', fontSize: "15px", color: "rgba(255,255,255,0.2)", fontWeight: 600, marginBottom: "8px" }}>
               Canvas Empty
             </div>
-            <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: "10px", color: "rgba(255,255,255,0.1)", letterSpacing: "0.12em", textTransform: "uppercase" }}>
+            <div style={{ fontFamily: 'Fira Code, monospace', fontSize: "10px", color: "rgba(255,255,255,0.1)", letterSpacing: "0.12em", textTransform: "uppercase" }}>
               Upload a diagram and send a message
             </div>
           </div>
@@ -295,7 +295,7 @@ function NebulaCanvas({
 
       <div style={{
         position: "absolute", top: 28, left: 28,
-        fontFamily: "JetBrains Mono,monospace", fontSize: "9px",
+        fontFamily: 'Fira Code, monospace', fontSize: "9px",
         color: "rgba(255,255,255,0.15)", letterSpacing: "0.2em",
         textTransform: "uppercase", zIndex: 2,
       }}>
@@ -382,7 +382,7 @@ function NebulaCanvas({
                   <NodeTypeIcon type={node.type} />
                 </span>
                 <span style={{
-                  fontFamily: "JetBrains Mono,monospace", fontSize: "8px",
+                  fontFamily: 'Fira Code, monospace', fontSize: "8px",
                   color: node.active ? "rgba(255,255,255,0.85)" : "rgba(196,199,200,0.3)",
                   letterSpacing: "0.12em", textTransform: "uppercase",
                 }}>
@@ -390,7 +390,7 @@ function NebulaCanvas({
                 </span>
               </div>
 
-              <div style={{ fontFamily: "Sora,sans-serif", fontSize: "14px", fontWeight: 600, color: "#fff", marginBottom: "12px" }}>
+              <div style={{ fontFamily: 'Space Grotesk, sans-serif', fontSize: "14px", fontWeight: 600, color: "#fff", marginBottom: "12px" }}>
                 {node.label}
               </div>
 
@@ -399,7 +399,7 @@ function NebulaCanvas({
                   <div style={{ height: "100%", width: "33%", background: "rgba(255,255,255,0.75)", borderRadius: "2px", animation: "loadPulse 2s ease-in-out infinite" }} />
                 </div>
               ) : (
-                <div style={{ fontFamily: "JetBrains Mono,monospace", fontSize: "9px", color: "rgba(196,199,200,0.4)", letterSpacing: "0.08em" }}>
+                <div style={{ fontFamily: 'Fira Code, monospace', fontSize: "9px", color: "rgba(196,199,200,0.4)", letterSpacing: "0.08em" }}>
                   {node.sub}
                 </div>
               )}
@@ -470,10 +470,10 @@ function ChatSidebar({
         flexShrink: 0,
       }}>
         <div>
-          <h2 style={{ fontFamily: "Sora,sans-serif", fontSize: "18px", fontWeight: 600, color: "#fff", marginBottom: "6px" }}>
+          <h2 style={{ fontFamily: 'Space Grotesk, sans-serif', fontSize: "18px", fontWeight: 600, color: "#fff", marginBottom: "6px" }}>
             Trace Chat
           </h2>
-          <p style={{ fontFamily: "JetBrains Mono,monospace", fontSize: "9px", color: "rgba(196,199,200,0.35)", letterSpacing: "0.2em", textTransform: "uppercase", display: "flex", alignItems: "center", gap: "6px" }}>
+          <p style={{ fontFamily: 'Fira Code, monospace', fontSize: "9px", color: "rgba(196,199,200,0.35)", letterSpacing: "0.2em", textTransform: "uppercase", display: "flex", alignItems: "center", gap: "6px" }}>
             <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#fff", opacity: 0.6, animation: "pulseStatus 2s infinite" }} />
             NEURAL_SYNC_STABLE
           </p>
@@ -511,7 +511,7 @@ function ChatSidebar({
         {messages.length === 0 && !loading && (
           <div style={{
             color: "rgba(196,199,200,0.3)",
-            fontFamily: "JetBrains Mono,monospace", fontSize: "11px",
+            fontFamily: 'Fira Code, monospace', fontSize: "11px",
             letterSpacing: "0.08em", textAlign: "center", marginTop: "40px",
           }}>
             <div style={{
@@ -565,7 +565,7 @@ function ChatSidebar({
                         <div style={{
                           display: "flex", justifyContent: "space-between",
                           marginBottom: "8px", opacity: 0.3,
-                          fontFamily: "JetBrains Mono,monospace", fontSize: "10px",
+                          fontFamily: 'Fira Code, monospace', fontSize: "10px",
                         }}>
                           <span>generated.sh</span>
                           <button
@@ -575,7 +575,7 @@ function ChatSidebar({
                             <Code2 size={12} />
                           </button>
                         </div>
-                        <code style={{ fontFamily: "JetBrains Mono,monospace", fontSize: "12px", color: "rgba(196,199,200,0.85)", lineHeight: 1.6 }}>
+                        <code style={{ fontFamily: 'Fira Code, monospace', fontSize: "12px", color: "rgba(196,199,200,0.85)", lineHeight: 1.6 }}>
                           {msg.traceResult.generated_code}
                         </code>
                       </div>
@@ -588,7 +588,7 @@ function ChatSidebar({
                             padding: "3px 10px",
                             border: "1px solid rgba(255,255,255,0.1)",
                             borderRadius: "9999px",
-                            fontFamily: "JetBrains Mono,monospace", fontSize: "10px",
+                            fontFamily: 'Fira Code, monospace', fontSize: "10px",
                             color: "rgba(196,199,200,0.5)",
                             background: "rgba(255,255,255,0.03)",
                           }}>
@@ -600,7 +600,7 @@ function ChatSidebar({
                             padding: "3px 10px",
                             border: "1px solid rgba(255,255,255,0.07)",
                             borderRadius: "9999px",
-                            fontFamily: "JetBrains Mono,monospace", fontSize: "10px",
+                            fontFamily: 'Fira Code, monospace', fontSize: "10px",
                             color: "rgba(196,199,200,0.3)",
                           }}>
                             {e.from} → {e.to}
@@ -628,14 +628,14 @@ function ChatSidebar({
                       borderTop: "1px solid rgba(255,255,255,0.25)",
                       borderLeft: "1px solid rgba(255,255,255,0.25)",
                       padding: "12px 16px",
-                      color: "#fff", fontSize: "13px", fontFamily: "Geist,sans-serif",
+                      color: "#fff", fontSize: "13px", fontFamily: 'Plus Jakarta Sans, sans-serif',
                       lineHeight: 1.65, borderRadius: "2px", textAlign: "left",
                     }}>
                       {msg.content}
                     </div>
                     <div style={{
                       marginTop: "5px",
-                      fontFamily: "JetBrains Mono,monospace", fontSize: "8px",
+                      fontFamily: 'Fira Code, monospace', fontSize: "8px",
                       color: "rgba(196,199,200,0.2)", letterSpacing: "0.12em", textTransform: "uppercase",
                     }}>
                       Delivered
@@ -693,7 +693,7 @@ function ChatSidebar({
               padding: "4px 12px",
               border: "1px solid rgba(255,255,255,0.1)",
               background: "rgba(255,255,255,0.03)",
-              fontFamily: "JetBrains Mono,monospace", fontSize: "10px",
+              fontFamily: 'Fira Code, monospace', fontSize: "10px",
               color: "rgba(196,199,200,0.6)", letterSpacing: "0.04em", borderRadius: "2px",
             }}>
               <ImageIcon size={10} />
@@ -722,7 +722,7 @@ function ChatSidebar({
               background: dropHover ? "rgba(255,255,255,0.04)" : "transparent",
               cursor: "pointer", marginBottom: "12px",
               fontSize: "11px", color: "rgba(196,199,200,0.4)",
-              fontFamily: "Geist,sans-serif", borderRadius: "2px", transition: "all 0.2s",
+              fontFamily: 'Plus Jakarta Sans, sans-serif', borderRadius: "2px", transition: "all 0.2s",
             }}
           >
             <Upload size={12} />
@@ -763,7 +763,7 @@ function ChatSidebar({
               className="chat-textarea"
               style={{
                 width: "100%", background: "transparent", border: "none",
-                color: "#e2e2e2", fontSize: "13px", fontFamily: "Geist,sans-serif",
+                color: "#e2e2e2", fontSize: "13px", fontFamily: 'Plus Jakarta Sans, sans-serif',
                 lineHeight: 1.65, padding: "14px", outline: "none",
                 resize: "none", display: "block",
               }}
@@ -822,7 +822,7 @@ function ChatSidebar({
           </div>
         </form>
 
-        <div style={{ textAlign: "center", marginTop: "10px", fontFamily: "JetBrains Mono,monospace", fontSize: "8px", color: "rgba(196,199,200,0.15)", letterSpacing: "0.2em", textTransform: "uppercase" }}>
+        <div style={{ textAlign: "center", marginTop: "10px", fontFamily: 'Fira Code, monospace', fontSize: "8px", color: "rgba(196,199,200,0.15)", letterSpacing: "0.2em", textTransform: "uppercase" }}>
           TRANSMIT: CTRL + ENTER
         </div>
 
@@ -830,7 +830,7 @@ function ChatSidebar({
           <motion.p
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            style={{ marginTop: "8px", fontSize: "10px", color: "rgba(255,80,80,0.85)", fontFamily: "JetBrains Mono,monospace", letterSpacing: "0.04em" }}
+            style={{ marginTop: "8px", fontSize: "10px", color: "rgba(255,80,80,0.85)", fontFamily: 'Fira Code, monospace', letterSpacing: "0.04em" }}
           >
             ✗ {error}
           </motion.p>
@@ -1004,7 +1004,7 @@ export default function ChatPage() {
         <div
           onClick={() => router.push('/')}
           style={{
-            fontFamily: "Sora,sans-serif", fontSize: "18px", fontWeight: 700,
+            fontFamily: 'Space Grotesk, sans-serif', fontSize: "18px", fontWeight: 700,
             color: "#fff", letterSpacing: "-0.02em", textTransform: "uppercase",
             cursor: "pointer",
           }}
@@ -1019,7 +1019,7 @@ export default function ChatPage() {
               href={i === 0 ? "/" : "#"}
               onClick={i === 0 ? (e) => { e.preventDefault(); router.push("/"); } : undefined}
               style={{
-                fontFamily: "Geist,sans-serif", fontSize: "14px",
+                fontFamily: 'Plus Jakarta Sans, sans-serif', fontSize: "14px",
                 color: i === 0 ? "#fff" : "rgba(196,199,200,0.45)",
                 textDecoration: "none",
                 borderBottom: i === 0 ? "1px solid #fff" : "none",
@@ -1036,7 +1036,7 @@ export default function ChatPage() {
 
         <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
           <span style={{
-            fontFamily: "JetBrains Mono,monospace", fontSize: "9px",
+            fontFamily: 'Fira Code, monospace', fontSize: "9px",
             color: "rgba(196,199,200,0.3)", letterSpacing: "0.2em",
           }}>
             SESSION: V_ALPHA_9
@@ -1045,7 +1045,7 @@ export default function ChatPage() {
             onClick={handleReset}
             style={{
               padding: "10px 24px", background: "#fff", border: "none",
-              color: "#1a1a1a", fontFamily: "Geist,sans-serif", fontSize: "11px",
+              color: "#1a1a1a", fontFamily: 'Plus Jakarta Sans, sans-serif', fontSize: "11px",
               fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase",
               cursor: "pointer", transition: "box-shadow 0.2s",
             }}
