@@ -26,6 +26,7 @@ API_KEY = os.getenv("GEMINI_API_KEY")
 if not API_KEY:
     raise RuntimeError("GEMINI_API_KEY is not set. Please add it to your .env file.")
 PORT = int(os.getenv("PORT", 8000))
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
 
 # Initialize Gemini Client (google-genai, current SDK)
 client = genai.Client(api_key=API_KEY)
@@ -43,6 +44,7 @@ class TraceState(TypedDict):
     response:       str
     generated_code: str          # Trace-to-Code output
     chat_history:   List[dict]   # [{"role": "user"|"assistant", "content": str}]
+    diagram_type:   str          # "flowchart" | "class_diagram" | "er_diagram" | "sequence" | "other"
 
 
 # ─────────────────────────────────────────
@@ -255,52 +257,80 @@ def _reindex_nodes(nodes: List[dict]) -> List[dict]:
 
 def vision_parser_node(state: TraceState):
     """
-    Single-pass Gemini Vision call.
-    - Resizes image to ≤ 1024px before sending (bandwidth reduction).
-    - Asks for unified JSON with 'nodes' and 'edges'.
-    - Validates edge IDs reference real nodes.
-    - Re-indexes nodes to guarantee sequential n1, n2, n3 IDs.
-    - Retries on quota errors with exponential backoff.
+    Universal Gemini Vision diagram parser.
+    - Detects diagram type (flowchart, UML class, ER, sequence, etc.)
+    - Extracts nodes with type-appropriate fields
+    - Resizes image to ≤ 1024px before sending
+    - Validates edge IDs reference real nodes
+    - Re-indexes nodes to guarantee sequential n1, n2, n3 IDs
+    - Retries on quota errors with exponential backoff
     """
     print("--- TRACE VISION: ANALYZING DIAGRAM ---")
 
     unified_prompt = (
-        "You are an expert flowchart parser. Analyze the diagram in the image.\n\n"
+        "You are an expert diagram parser that can analyze ANY type of software diagram.\n\n"
+        "STEP 1: Identify the diagram type from the image. It could be:\n"
+        "  - 'flowchart' (process boxes, decision diamonds, arrows)\n"
+        "  - 'class_diagram' (UML classes with attributes and methods)\n"
+        "  - 'er_diagram' (entity-relationship: tables with columns)\n"
+        "  - 'sequence' (sequence diagram with lifelines and messages)\n"
+        "  - 'other' (any other type)\n\n"
+        "STEP 2: Extract ALL components as nodes and relationships as edges.\n\n"
         "Return ONLY a single valid JSON object following this schema exactly. "
         "Do NOT include markdown fences, prose, or any text outside the JSON.\n"
         "{\n"
+        '  "diagram_type": "class_diagram",\n'
         '  "nodes": [\n'
-        '    {"id": "n1", "label": "Start",      "type": "Process",  "bbox": [ymin, xmin, ymax, xmax]},\n'
-        '    {"id": "n2", "label": "In Stock?",   "type": "Decision", "bbox": [ymin, xmin, ymax, xmax]},\n'
-        '    {"id": "n3", "label": "Order Items", "type": "Process",  "bbox": [ymin, xmin, ymax, xmax]}\n'
-        "  ],\n"
+        '    {\n'
+        '      "id": "n1",\n'
+        '      "label": "ClassName",\n'
+        '      "type": "Class",\n'
+        '      "attributes": ["- name: String", "- age: int"],\n'
+        '      "methods": ["+ getName()", "+ setAge(int)"],\n'
+        '      "stereotype": "entity",\n'
+        '      "bbox": [ymin, xmin, ymax, xmax]\n'
+        '    }\n'
+        '  ],\n'
         '  "edges": [\n'
-        '    {"from": "n1", "to": "n2", "label": "connects"},\n'
-        '    {"from": "n2", "to": "n3", "label": "No"}\n'
-        "  ]\n"
-        "}\n\n"
+        '    {"from": "n1", "to": "n2", "label": "inherits", "type": "inheritance"}\n'
+        '  ]\n'
+        '}\n\n'
         "Rules:\n"
         "- Assign IDs sequentially: n1, n2, n3, … in top-to-bottom, left-to-right order.\n"
-        "- Node types are EXACTLY one of: Process | Decision | Actor | Database\n"
+        "- For CLASS DIAGRAMS:\n"
+        "  · Node type must be 'Class', 'Interface', 'AbstractClass', or 'Enum'\n"
+        "  · Extract ALL attributes and methods visible in each class box\n"
+        "  · Preserve visibility modifiers (+ public, - private, # protected)\n"
+        "  · Edge types: 'inheritance', 'implementation', 'composition', 'aggregation', 'association', 'dependency'\n"
+        "  · Include multiplicity in edge labels (e.g. '1..*', '0..1')\n"
+        "- For FLOWCHARTS:\n"
+        "  · Node types: 'Process', 'Decision', 'Actor', 'Database', 'Start', 'End'\n"
+        "  · Edge labels: 'Yes'/'No' for decisions, action verbs for processes, 'connects' if unlabeled\n"
+        "- For ER DIAGRAMS:\n"
+        "  · Node type: 'Entity'\n"
+        "  · Include 'attributes' array with column names and types\n"
+        "  · Edge types: 'one-to-one', 'one-to-many', 'many-to-many'\n"
+        "- For SEQUENCE DIAGRAMS:\n"
+        "  · Node type: 'Participant' or 'Actor'\n"
+        "  · Edges represent messages with labels being the message text\n"
+        "  · Edge type: 'sync', 'async', 'return'\n"
         "- BBox values are 0-1000 integers [ymin, xmin, ymax, xmax].\n"
         "- Edges: 'from' and 'to' MUST be IDs that exist in the nodes array.\n"
-        "- Every arrow must have a label. Use 'Yes' or 'No' for decision branches, "
-        "  a verb/action for process arrows (e.g., 'validates', 'triggers'), or 'connects' if truly unlabeled.\n"
-        "- If a Decision node has 'Yes'/'No' branches, label those edges 'Yes' and 'No'.\n"
         "- Do NOT create self-loops (from == to).\n"
-        "- Identify EVERY process box, decision diamond, actor/swimlane, and database cylinder."
+        "- Identify EVERY component visible in the diagram — do not skip anything.\n"
+        "- Read ALL text in the diagram carefully, including small annotations and notes."
     )
 
     fallback_node  = [{"id": "n1", "label": "Unknown Component", "type": "Process", "bbox": []}]
     fallback_edges: List[dict] = []
 
     try:
-        # ── Feature 4a: Resize image before sending ──────────────────────────
+        # ── Resize image before sending ──────────────────────────────────────
         img = resize_image(state["image_bytes"], max_px=1024)
 
-        print("[Vision] Sending request to gemini-flash-latest (1.5) with retry...")
+        print(f"[Vision] Sending request to {GEMINI_MODEL} with retry...")
         resp     = _gemini_generate_with_retry(
-            model="gemini-flash-latest",
+            model=GEMINI_MODEL,
             contents=[unified_prompt, img],
         )
         raw_text = resp.text
@@ -314,6 +344,12 @@ def vision_parser_node(state: TraceState):
             m = re.search(r"\{.*\}", cleaned, re.DOTALL)
             data = json.loads(m.group(0)) if m else {}
 
+        # Extract diagram type
+        diagram_type = "flowchart"  # default
+        if isinstance(data, dict):
+            diagram_type = data.get("diagram_type", "flowchart")
+        print(f"[Vision] Detected diagram type: {diagram_type}")
+
         raw_nodes = data.get("nodes", []) if isinstance(data, dict) else []
         if not raw_nodes and isinstance(data, list):
             raw_nodes = [item for item in data if "label" in item and "id" in item]
@@ -321,12 +357,32 @@ def vision_parser_node(state: TraceState):
         else:
             raw_edges = data.get("edges", []) if isinstance(data, dict) else []
 
-        entities: List[dict] = [
-            {"id": str(n["id"]), "label": str(n["label"]), "type": str(n.get("type", "Process")), "bbox": n.get("bbox", [])}
-            for n in raw_nodes if isinstance(n, dict) and "id" in n and "label" in n
-        ]
+        entities: List[dict] = []
+        for n in raw_nodes:
+            if not isinstance(n, dict) or "id" not in n or "label" not in n:
+                continue
+            node = {
+                "id":    str(n["id"]),
+                "label": str(n["label"]),
+                "type":  str(n.get("type", "Process")),
+                "bbox":  n.get("bbox", []),
+            }
+            # Preserve extra fields for class/ER diagrams
+            if "attributes" in n:
+                node["attributes"] = n["attributes"]
+            if "methods" in n:
+                node["methods"] = n["methods"]
+            if "stereotype" in n:
+                node["stereotype"] = n["stereotype"]
+            entities.append(node)
+
         edges: List[dict] = [
-            {"from": str(e["from"]), "to": str(e["to"]), "label": str(e.get("label", "connects"))}
+            {
+                "from":  str(e["from"]),
+                "to":    str(e["to"]),
+                "label": str(e.get("label", "connects")),
+                "edge_type": str(e.get("type", "")),
+            }
             for e in raw_edges if isinstance(e, dict) and "from" in e and "to" in e
         ]
 
@@ -339,7 +395,7 @@ def vision_parser_node(state: TraceState):
         if not entities:
             entities = fallback_node
 
-        # ── Feature 1: Re-index to guarantee sequential IDs ──────────────────
+        # ── Re-index to guarantee sequential IDs ─────────────────────────────
         entities, id_map = _reindex_nodes(entities)
         print(f"[Vision] Node ID mapping: {id_map}")
 
@@ -349,20 +405,21 @@ def vision_parser_node(state: TraceState):
             new_from = id_map.get(ed["from"])
             new_to   = id_map.get(ed["to"])
             if new_from and new_to:
-                remapped_edges.append({"from": new_from, "to": new_to, "label": ed["label"]})
+                remapped_edges.append({"from": new_from, "to": new_to, "label": ed["label"], "edge_type": ed.get("edge_type", "")})
             else:
                 print(f"[Vision] Edge {ed['from']}→{ed['to']} dropped (unmappable ID)")
         edges = remapped_edges
 
-        # ── Feature 2: Validate edges reference real node IDs ────────────────
+        # ── Validate edges reference real node IDs ───────────────────────────
         valid_ids = {n["id"] for n in entities}
         edges = _validate_edges(edges, valid_ids)
 
-        print(f"Parsed {len(entities)} nodes, {len(edges)} edges")
+        print(f"Parsed {len(entities)} nodes, {len(edges)} edges (type: {diagram_type})")
         return {
-            "rectangles": entities,
-            "edges":      edges,
-            "gemini_raw": raw_text,
+            "rectangles":   entities,
+            "edges":        edges,
+            "gemini_raw":   raw_text,
+            "diagram_type": diagram_type,
         }
 
     except Exception as e:
@@ -371,9 +428,10 @@ def vision_parser_node(state: TraceState):
         if any(x in err_str for x in ["RESOURCE_EXHAUSTED", "429", "404", "NOT_FOUND"]):
             raise
         return {
-            "rectangles": fallback_node,
-            "edges":      fallback_edges,
-            "gemini_raw": f"[API unavailable: {err_str[:200]}]",
+            "rectangles":   fallback_node,
+            "edges":        fallback_edges,
+            "gemini_raw":   f"[API unavailable: {err_str[:200]}]",
+            "diagram_type": "flowchart",
         }
 
 
@@ -425,7 +483,7 @@ def rag_node(state: TraceState):
 
     try:
         resp = _gemini_generate_with_retry(
-            model="gemini-flash-latest",
+            model=GEMINI_MODEL,
             contents=analysis_prompt,
         )
         response = resp.text
