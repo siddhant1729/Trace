@@ -563,11 +563,10 @@ function ChatSidebar({
                         borderRadius: "4px", padding: "12px", marginTop: "10px",
                       }}>
                         <div style={{
-                          display: "flex", justifyContent: "space-between",
+                          display: "flex", justifyContent: "flex-end",
                           marginBottom: "8px", opacity: 0.3,
                           fontFamily: 'Fira Code, monospace', fontSize: "10px",
                         }}>
-                          <span>generated.sh</span>
                           <button
                             onClick={() => navigator.clipboard.writeText(msg.traceResult?.generated_code || "")}
                             style={{ background: "none", border: "none", cursor: "pointer", color: "inherit", display: "flex" }}
