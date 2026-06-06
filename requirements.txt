@@ -4,6 +4,7 @@ langchain-google-genai
 google-genai
 faiss-cpu
 python-dotenv
+pydantic-settings
 pillow
 tenacity
 fastapi

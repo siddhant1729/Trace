@@ -14,13 +14,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Backend
 ```bash
 # Activate virtualenv
-source .venv/bin/activate   # or: source venv/bin/activate
+source .venv/bin/activate
 
 # Run backend (dev)
-python main.py              # uvicorn on 0.0.0.0:8000 (PORT env var overrides)
+uvicorn trace.api.main:app --host 0.0.0.0 --port 8000 --reload
 
-# Or directly
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+# Or via the root shim (backward compat)
+python main.py
+
+# Run tests
+pip install -r requirements-dev.txt
+pytest tests/ -v
 ```
 
 ### Frontend
@@ -49,9 +53,22 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 
 ## Architecture
 
-### Backend: `main.py` (single file, ~820 lines)
+### Backend: `trace/` package
 
-The entire backend lives in `main.py`. The LangGraph pipeline is:
+```
+trace/
+├── config.py          # pydantic-settings: GEMINI_API_KEY, GEMINI_MODEL, PORT, etc.
+├── api/main.py        # FastAPI app + /chat endpoint
+├── graph/
+│   ├── nodes.py       # TraceState, all helpers, all LangGraph node functions
+│   └── pipeline.py    # Graph assembly → exports trace_brain
+├── nodes/             # Placeholder package (empty, reserved for future node modules)
+└── library/           # Placeholder package (empty, reserved for RAG library)
+```
+
+Root `main.py` is a backward-compat shim that re-exports `app` from `trace.api.main`.
+
+The LangGraph pipeline is:
 
 ```
 vision_parser_node  →  analysis_node (parallel: rag_node + code_gen_node)  →  END
@@ -62,16 +79,16 @@ vision_parser_node  →  analysis_node (parallel: rag_node + code_gen_node)  →
 - **`rag_node`**: Second Gemini call — answers the user query using the parsed graph structure + conversation history.
 - **`code_gen_node`**: Rule-based (no LLM). Inspects node types: `Database` → SQL DDL, `Actor`/`Process` → FastAPI endpoints, `Decision` → if/else blocks.
 
-**State type** (`TraceState` TypedDict, defined inline in `main.py`):
+**State type** (`TraceState` TypedDict, defined in `trace/graph/nodes.py`):
 ```python
 user_query, image_bytes, rectangles, edges, gemini_raw, response, generated_code, chat_history, diagram_type
 ```
 
-**`state.py`** defines `GlyphState` — this is **legacy/unused**. Ignore it.
+**`_archive/state.py`** defines `GlyphState` — this is **legacy/unused**. Ignore it.
 
-**Retry logic**: `_gemini_generate_with_retry()` wraps all Gemini calls with tenacity exponential backoff on 429/RESOURCE_EXHAUSTED errors.
+**Retry logic**: `_gemini_generate_with_retry()` in `trace/graph/nodes.py` wraps all Gemini calls with tenacity exponential backoff on 429/RESOURCE_EXHAUSTED errors.
 
-**Single endpoint**: `POST /chat` — accepts `multipart/form-data` with `query` (str), `file` (image), `history` (JSON string of prior messages).
+**Single endpoint**: `POST /chat` in `trace/api/main.py` — accepts `multipart/form-data` with `query` (str), `file` (image), `history` (JSON string of prior messages).
 
 ### Frontend: `frontend/`
 
@@ -89,7 +106,7 @@ The UI is strictly achromatic glassmorphism. Key rules:
 - **Spacing**: 4px base unit; all spacing multiples of 4px
 - The full spec is in `DESIGN.md`
 
-## Known Issues (from `corrections.md`)
+## Known Issues (from `docs/corrections.md`)
 
 1. **XSS**: `inlineMd()` in `chat/page.tsx` calls `dangerouslySetInnerHTML` without escaping Gemini output first. Fix: call `escapeHtml(t)` before regex replacements.
 2. **Blocking event loop**: `trace_brain.invoke()` is synchronous; should be `await trace_brain.ainvoke()` or `await asyncio.to_thread(trace_brain.invoke, initial_state)`.
@@ -100,5 +117,5 @@ The UI is strictly achromatic glassmorphism. Key rules:
 
 - `faiss-cpu` is in `requirements.txt` but never imported — the RAG retrieval from a personal code library described in the README is not implemented.
 - `library/`, `nodes/`, `uploads/` directories are empty.
-- `state.py` is legacy.
-- Frontend components **not imported anywhere**: `FeatureCards.tsx`, `Footer.tsx`, `MeshBackground.tsx`, `ThemeToggle.tsx`, `TraceChat.tsx`.
+- `_archive/state.py` is legacy.
+- Frontend components **not imported anywhere** (moved to `frontend/components/_unused/`): `FeatureCards.tsx`, `Footer.tsx`, `MeshBackground.tsx`, `ThemeToggle.tsx`, `TraceChat.tsx`.
