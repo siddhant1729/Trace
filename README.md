@@ -41,51 +41,80 @@ Trace employs a sophisticated **Multimodal Agentic RAG** workflow to ensure accu
 
 ### Prerequisites
 
-*   Python 3.9+
-*   WSL/Ubuntu (Recommended)
+*   Python 3.10+
+*   Node.js 18+
 *   Google Gemini API Key
 
 ### Installation
 
 1.  **Clone the repository**
     ```bash
-    git clone https://github.com/yourusername/Trace.git
+    git clone https://github.com/siddhant1729/Trace.git
     cd Trace
     ```
 
-2.  **Create a virtual environment**
+2.  **Create a virtual environment and install backend dependencies**
     ```bash
     python3 -m venv .venv
     source .venv/bin/activate
-    ```
-
-3.  **Install dependencies**
-    ```bash
     pip install -r requirements.txt
     ```
 
-4.  **Configure Environment**
-    Create a `.env` file and add your API keys:
+3.  **Configure environment variables**
     ```bash
-    # .env
-    GOOGLE_API_KEY=your_gemini_api_key
+    cp .env.example .env
+    # Open .env and set GEMINI_API_KEY to your Google AI Studio key
+    ```
+
+    `.env` reference:
+    ```
+    GEMINI_API_KEY=your-gemini-api-key-here
+    GEMINI_MODEL=gemini-flash-latest   # optional
+    PORT=8000                          # optional
+    ALLOWED_ORIGINS=http://localhost:3000  # optional
+    ```
+
+4.  **Install frontend dependencies**
+    ```bash
+    cd frontend
+    npm install
+    cd ..
     ```
 
 ---
 
-## 💻 Usage
+## 💻 Running Locally
 
-Run Trace by pointing it to your architecture diagram.
+Open two terminals from the repo root.
 
+**Terminal 1 — Backend**
 ```bash
-# Example
-python main.py --image ./uploads/my_system_design.png --output ./my-new-project
+source .venv/bin/activate
+uvicorn trace.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Trace will:
-1.  Parse `my_system_design.png`.
-2.  Retrieve relevant patterns from `library/`.
-3.  Generate a verified project scaffold in `./my-new-project`.
+**Terminal 2 — Frontend**
+```bash
+cd frontend
+npm run dev
+```
+
+Then open [http://localhost:3000](http://localhost:3000) in your browser.
+
+### Project structure
+
+```
+trace/
+├── config.py         # pydantic-settings (reads .env)
+├── api/main.py       # FastAPI app + /chat endpoint
+├── graph/
+│   ├── nodes.py      # Vision parser, RAG, code-gen node functions
+│   └── pipeline.py   # LangGraph graph assembly
+├── nodes/            # Reserved for future node modules
+└── library/          # Reserved for RAG code library
+frontend/             # Next.js UI
+tests/                # pytest test suite
+```
 
 ---
 
@@ -100,6 +129,7 @@ Trace will:
 ## 🏗️ Tech Stack
 
 *   **Orchestration**: [LangGraph](https://github.com/langchain-ai/langgraph)
-*   **Intelligence**: [Gemini 1.5 Pro](https://deepmind.google/technologies/gemini/)
-*   **Vector Memory**: [FAISS](https://github.com/facebookresearch/faiss)
-*   **Environment**: WSL/Ubuntu
+*   **Intelligence**: [Gemini](https://deepmind.google/technologies/gemini/) (via `google-genai`)
+*   **Backend**: [FastAPI](https://fastapi.tiangolo.com/) + [uvicorn](https://www.uvicorn.org/)
+*   **Frontend**: [Next.js](https://nextjs.org/) (App Router, Tailwind CSS)
+*   **Config**: [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)
