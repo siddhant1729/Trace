@@ -1,6 +1,6 @@
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, StateGraph
 
-from .nodes import TraceState, vision_parser_node, analysis_node
+from .nodes import TraceState, analysis_node, vision_parser_node
 
 workflow = StateGraph(TraceState)
 workflow.add_node("vision_parser", vision_parser_node)
