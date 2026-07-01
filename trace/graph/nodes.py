@@ -1,20 +1,19 @@
 import io
-import re
 import json
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import TypedDict, List
+from trace.config import settings
+from typing import List, TypedDict
 
 from google import genai
 from PIL import Image
 from tenacity import (
     retry,
+    retry_if_exception,
     stop_after_attempt,
     wait_random_exponential,
-    retry_if_exception,
 )
-
-from trace.config import settings
 
 if not settings.gemini_api_key:
     raise RuntimeError("GEMINI_API_KEY is not set. Please add it to your .env file.")
@@ -97,8 +96,10 @@ def _parse_json_objects(raw: str, required_keys: set) -> List[dict]:
             continue
         depth, j = 0, i
         while j < n:
-            if cleaned[j] == "{": depth += 1
-            elif cleaned[j] == "}": depth -= 1
+            if cleaned[j] == "{":
+                depth += 1
+            elif cleaned[j] == "}":
+                depth -= 1
             if depth == 0:
                 break
             j += 1
@@ -616,7 +617,7 @@ def code_gen_node(state: TraceState):
                 f"    Process: {proc['label']}\n"
                 f"    \"\"\"\n"
                 + "\n".join(logic_body) + "\n"
-                f"    return {{\"status\": \"ok\"}}\n\n\n"
+                "    return {\"status\": \"ok\"}\n\n\n"
             )
 
         code_sections.append("".join(py_lines))

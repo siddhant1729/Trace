@@ -1,12 +1,11 @@
 import json
-from typing import List
-
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
-from fastapi.middleware.cors import CORSMiddleware
-
 from trace.config import settings
 from trace.graph.nodes import TraceState
 from trace.graph.pipeline import trace_brain
+from typing import List
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Trace AI Backend")
 
