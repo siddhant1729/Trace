@@ -19,21 +19,20 @@ Whether you're sketching a complex microservices mesh or a simple state machine,
 
 ## 🛠️ How It Works
 
-Trace employs a sophisticated **Multimodal Agentic RAG** workflow to ensure accuracy and code quality. The core pipeline consists of three specialized nodes:
+Trace employs a **Multimodal RAG** workflow, orchestrated with **LangGraph**, to ensure accuracy and code quality. The pipeline consists of these nodes:
 
-1.  **📸 Vision Node**: **Gemini 1.5 Pro** analyzes your uploaded diagram continuously, identifying components, relationships, and data flow direction.
-2.  **📚 RAG Retrieval Node**: The system queries a **FAISS** vector database indexed with your personal library of high-quality C++ and Python snippets (e.g., `def hello_world():`), ensuring the output matches your engineering standards.
-3.  **💻 Coder Node**: The LLM synthesizes the visual data and retrieved snippets to generate a complete, verified project structure.
-4.  **✅ Agentic Validation**: A **LangGraph** orchestration layer validates the generated code against the original diagram, self-correcting any hallucinations or missing connections.
+1.  **📸 Vision Node**: **Gemini** analyzes your uploaded diagram, identifying components, relationships, and data flow direction as structured nodes + edges.
+2.  **📚 RAG Retrieval**: The parsed diagram is embedded with **Gemini embeddings** and used to query a **ChromaDB** vector store seeded with a curated library of production-shaped code patterns (FastAPI routes, SQLAlchemy models, Redis caching, message-queue consumers, Dockerfiles, and more). The closest patterns are injected into the analysis prompt so the answer is grounded in real, idiomatic implementations.
+3.  **💻 Code-Gen Node**: A rule-based generator inspects node types and scaffolds SQL DDL (Database nodes) and FastAPI skeletons (Actor/Process/Decision nodes).
 
 ---
 
 ## ✨ Key Features
 
-*   **Multimodal RAG**: Context-aware code generation that "sees" your diagram and "remembers" your best code snippets.
-*   **Agentic Self-Correction**: Powered by LangGraph, Trace iterates on its own output to fix logical inconsistencies before you ever see the code.
-*   **Opinionated Snippets**: Indexes *your* codebase (FAISS) to write code that looks like *you* wrote it.
-*   **Production Ready**: Generates standard folder structures, Dockerfiles, and dependency lists—not just single script files.
+*   **Multimodal RAG**: Context-aware answers that "see" your diagram and retrieve matching architectural patterns from a **ChromaDB** vector library.
+*   **LangGraph Orchestration**: A typed state graph runs vision parsing, then RAG analysis and code generation in parallel.
+*   **Opinionated Patterns**: A curated, extensible corpus of production-shaped snippets (`trace/library/corpus.py`) grounds generated code in real idioms — add your own to make output look like *you* wrote it.
+*   **Boilerplate Scaffolding**: Emits SQL DDL and FastAPI skeletons directly from the parsed diagram.
 
 ---
 
@@ -69,12 +68,23 @@ Trace employs a sophisticated **Multimodal Agentic RAG** workflow to ensure accu
     `.env` reference:
     ```
     GEMINI_API_KEY=your-gemini-api-key-here
-    GEMINI_MODEL=gemini-flash-latest   # optional
-    PORT=8000                          # optional
-    ALLOWED_ORIGINS=http://localhost:3000  # optional
+    GEMINI_MODEL=gemini-flash-latest              # optional
+    EMBEDDING_MODEL=models/gemini-embedding-001   # optional (RAG embeddings)
+    CHROMA_PATH=./chroma_db                       # optional (vector store location)
+    PORT=8000                                     # optional
+    ALLOWED_ORIGINS=http://localhost:3000         # optional
     ```
 
-4.  **Install frontend dependencies**
+4.  **Seed the RAG vector store** (one-time; embeds the code-pattern corpus into ChromaDB)
+    ```bash
+    python scripts/ingest_corpus.py
+    # Inspect what was ingested:
+    python scripts/inspect_chroma.py
+    ```
+    Retrieval degrades gracefully if the store is empty, but seeding it is what makes
+    RAG actually augment the generated answers.
+
+5.  **Install frontend dependencies**
     ```bash
     cd frontend
     npm install
@@ -105,15 +115,20 @@ Then open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ```
 trace/
-├── config.py         # pydantic-settings (reads .env)
-├── api/main.py       # FastAPI app + /chat endpoint
+├── config.py           # pydantic-settings (reads .env)
+├── api/main.py         # FastAPI app + /chat endpoint
 ├── graph/
-│   ├── nodes.py      # Vision parser, RAG, code-gen node functions
-│   └── pipeline.py   # LangGraph graph assembly
-├── nodes/            # Reserved for future node modules
-└── library/          # Reserved for RAG code library
-frontend/             # Next.js UI
-tests/                # pytest test suite
+│   ├── nodes.py        # Vision parser, RAG, code-gen node functions
+│   └── pipeline.py     # LangGraph graph assembly
+├── library/            # RAG code-pattern library
+│   ├── corpus.py       # Curated code-pattern snippets + metadata
+│   └── vector_store.py # ChromaDB ingestion + retrieval (get_relevant_patterns)
+└── nodes/              # Reserved for future node modules
+scripts/
+├── ingest_corpus.py    # Seed the ChromaDB pattern store
+└── inspect_chroma.py   # Print collection count + sample entries
+frontend/               # Next.js UI
+tests/                  # pytest test suite
 ```
 
 ---
@@ -130,6 +145,7 @@ tests/                # pytest test suite
 
 *   **Orchestration**: [LangGraph](https://github.com/langchain-ai/langgraph)
 *   **Intelligence**: [Gemini](https://deepmind.google/technologies/gemini/) (via `google-genai`)
+*   **Vector Store / RAG**: [ChromaDB](https://www.trychroma.com/) with Gemini embeddings
 *   **Backend**: [FastAPI](https://fastapi.tiangolo.com/) + [uvicorn](https://www.uvicorn.org/)
 *   **Frontend**: [Next.js](https://nextjs.org/) (App Router, Tailwind CSS)
 *   **Config**: [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)
