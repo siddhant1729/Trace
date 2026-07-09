@@ -4,6 +4,7 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from trace.config import settings
+from trace.library.vector_store import get_relevant_patterns
 from typing import List, TypedDict
 
 from google import genai
@@ -423,14 +424,39 @@ def rag_node(state: TraceState):
             + "\n"
         )
 
+    # ── RAG: retrieve reference code patterns from the ChromaDB library ──
+    # Retrieval augments the prompt; a missing/empty store or any failure
+    # degrades gracefully to the original (patterns-free) behavior.
+    patterns_block = ""
+    try:
+        type_hints = ", ".join(sorted({n["type"] for n in entities}))
+        retrieval_query = f"{query}\nComponents ({type_hints}):\n{nodes_text}"
+        patterns = get_relevant_patterns(retrieval_query, k=3)
+        if patterns:
+            pattern_texts = "\n\n".join(
+                f"### Pattern: {p['metadata'].get('type', '?')} / "
+                f"{p['metadata'].get('stack', '?')}\n{p['document']}"
+                for p in patterns
+            )
+            patterns_block = (
+                "\n\nReference implementation patterns retrieved from the code "
+                "library (ground any code you suggest in these idioms):\n"
+                f"{pattern_texts}\n"
+            )
+            print(f"[RAG] Injected {len(patterns)} reference pattern(s) into prompt.")
+    except Exception as e:
+        print(f"[RAG] Pattern retrieval skipped: {e}")
+
     analysis_prompt = (
         "You are an expert at analyzing system diagrams. "
         "The user has uploaded a diagram. Here is its parsed structure:\n"
         f"Nodes:\n{nodes_text}\n\n"
         f"Relationships (Edges):\n{edges_text}\n"
+        f"{patterns_block}"
         f"{history_block}\n"
         f"User's current question: \"{query}\"\n\n"
         "Provide a concise, professional answer. Use prior conversation context if relevant. "
+        "If the reference patterns above are relevant to the question, draw on them. "
         "Do NOT mention node IDs like 'n1'. Use the labels provided."
     )
 

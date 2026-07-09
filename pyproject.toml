@@ -4,3 +4,11 @@ line-length = 88
 [tool.ruff.lint]
 select = ["E", "F", "I"]
 ignore = ['E501']
+
+[tool.pytest.ini_options]
+# Put the repo root on sys.path so `import trace.*` resolves to the local
+# package rather than Python's stdlib `trace` module. Without this, plain
+# `pytest tests/` (as CI runs it) fails to import the package — only
+# `python -m pytest` worked, because it implicitly prepends the cwd.
+pythonpath = ["."]
+testpaths = ["tests"]

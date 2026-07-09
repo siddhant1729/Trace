@@ -9,6 +9,7 @@ faiss_index/
 # Project dirs
 uploads/
 _archive/
+chroma_db/
 
 # Frontend (Next.js)
 frontend/node_modules/

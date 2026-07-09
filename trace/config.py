@@ -9,6 +9,7 @@ class Settings(BaseSettings):
 
     # Optional with defaults
     gemini_model: str = "gemini-flash-latest"
+    embedding_model: str = "models/gemini-embedding-001"
     port: int = 8000
     allowed_origins: str = "http://localhost:3000"
     chroma_path: str = "./chroma_db"
